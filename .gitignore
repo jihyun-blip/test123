@@ -1,0 +1,13 @@
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.venv/
+venv/
+sheets_xlsx/
+uploads/
+.DS_Store
+
+# 자격증명·사내문서 — 저장소에 올리지 않는다
+우편번호 승인키.txt
+*.docx
+*.xlsx
