@@ -24,7 +24,8 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.15"
+APP_VERSION = "2026-08-05.16"
+KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
 
@@ -603,7 +604,12 @@ with tab_report:
         c[2].metric("업로드 이미지", "%d장" % sum(_num(r["images"]) for r in recs))
         c[3].metric("토큰 (추정)", f"{tin + tout:,}",
                     "입력 %s / 출력 %s" % (f"{tin:,}", f"{tout:,}"))
-        c[4].metric("예상 비용", "$%.3f" % cost)
+        # 총액보다 "대화 1건당 얼마"가 자체 구축 판단의 실제 근거다.
+        per = cost / len(recs)
+        c[4].metric("예상 비용", "%s원" % f"{int(cost * KRW):,}",
+                    "대화 1건당 %s원" % f"{int(per * KRW):,}")
+        st.caption("환율 %s원/$ 기준 · 상담 1만 건 환산 시 약 %s원"
+                   % (f"{KRW:,}", f"{int(per * KRW * 10000):,}"))
 
         lat = [_num(r.get("latency_avg")) for r in recs if _num(r.get("latency_avg"))]
         if lat:
