@@ -24,7 +24,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.11"
+APP_VERSION = "2026-08-05.12"
 
 TESTERS = ["이지현", "김경민"]
 

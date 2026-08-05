@@ -174,10 +174,14 @@ class OrderState:
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
         label = (op.get("label_code") or "").strip()
 
-        # 무엇을 가리키는지 전혀 없는 항목은 버린다. 빈 줄을 만들면
+        # 무엇을 가리키는지 전혀 없는 항목은 어떤 op 든 버린다. 빈 줄이 만들어지면
         # "'말씀하신 상품'이 어떤 상품인지…" 처럼 실체 없는 되물음이 나간다.
-        if act == "add" and not hint and not label:
+        # add 만 막으면 op="update" 같은 빈 항목이 아래로 흘러 새 줄을 만든다.
+        if not hint and not label:
             return
+        if not hint:
+            # 라벨코드만 온 경우. 이름 자리가 비면 화면과 되물음에 빈 문자열이 남는다.
+            hint = label
 
         # 수량 표현만 있는 발화는 상품명이 아니다
         m = _QTY_ONLY.match(hint)
