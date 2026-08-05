@@ -25,6 +25,7 @@ CONSUMER = {
     "SHIPPING_FEE":            "code",
     "ACCOUNT_INFO":            "prompt",
     "EXACT_NAME_PRIORITY":     "code",
+    "PERSONA":                 "prompt",
     "TONE":                    "prompt",
     "SMALLTALK":               "prompt",
     "RECIPE_SUGGEST":          "prompt",

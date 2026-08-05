@@ -132,7 +132,17 @@ def build_system(policies, mode):
         return ("당신은 온라인 식료품 쇼핑몰의 고객 상담 챗봇입니다. "
                 "친절하게 응대하고 고객의 주문을 도와주세요.\n\n" + OUTPUT_CONTRACT)
 
-    lines = ["당신은 모모플러스의 주문 상담 챗봇입니다. 아래 운영 지침을 반드시 따릅니다.", ""]
+    persona = policies.get("PERSONA")
+    lines = ["당신은 모모플러스의 주문 상담 담당자입니다."]
+    if persona:
+        lines.append("말투와 태도는 '%s' 입니다." % persona)
+    lines += [
+        "고객이 주문과 무관한 말을 걸어도 사람처럼 짧게 받아준 뒤 하던 일로 돌아옵니다.",
+        "안내문을 읽는 듯한 문어체를 쓰지 않습니다.",
+        "",
+        "아래 운영 지침을 반드시 따릅니다.",
+        "",
+    ]
     for r in policies.prompt_rules():
         lines.append("- [%s] %s = %s : %s" % (
             r.get("구분", ""), r.get("키", ""), r.get("값", ""), r.get("설명", "")))

@@ -132,14 +132,14 @@ def _body(state, quote, catalog, policies):
                     opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                                       for c in near)
                     return ("'%s'는 이 중 어떤 것일까요? %s\n"
-                            "이 중에 없으면 상품 사진을 보내주시면 찾아드릴게요."
+                            "이 중에 없으면 사진 보내주시면 찾아드릴게요."
                             % (spoken(l.key), opts), "notfound_ask")
                 return ("'%s'가 어떤 상품인지 조금만 더 알려주시겠어요? 사진을 보내주셔도 좋아요."
                         % spoken(l.key), "notfound_ask")
 
     if not lines:
-        return ("찾으시는 상품을 말씀해주시면 장바구니에 담아드릴게요. "
-                "상품 사진을 보내주셔도 됩니다.", "order_ask")
+        return ("어떤 상품 찾으세요? 상품명을 말씀해주시거나 사진을 보내주시면 담아드릴게요.",
+                "order_ask")
 
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
@@ -148,7 +148,7 @@ def _body(state, quote, catalog, policies):
 
     if quote["blocked"]:
         miss = [r["표현"] for r in quote["rows"] if r["단가"] is None]
-        return ("%s의 가격을 확인 중이에요. 확인되는 대로 총액을 안내드릴게요."
+        return ("%s 가격을 확인하고 있어요. 확인되는 대로 총액 알려드릴게요."
                 % ", ".join(miss), "blocked")
 
     # ---------------------------------------------------------- 2단계 거래명세서
@@ -169,7 +169,7 @@ def _body(state, quote, catalog, policies):
 
     pend = pending(state, policies)
     if not (pend["missing"] or pend["detail"]):
-        out.append("주문해주셔서 감사합니다. 확인 후 빠르게 발송해드릴게요.")
+        out.append("주문 감사합니다! 확인하는 대로 바로 보내드릴게요.")
         return ("\n\n".join(out), "complete")
 
     return ("\n\n".join(out), "invoice" if show_invoice else "collecting")
@@ -191,7 +191,7 @@ def fallback_ask(pend):
     if pend["missing"]:
         return "%s를 알려주시겠어요?" % ", ".join(pend["missing"])
     if pend["detail"]:
-        return "동·호수까지 알려주시면 더 정확하게 배송해드릴 수 있어요."
+        return "동·호수도 알려주시면 배송이 더 정확해요."
     return ""
 
 
