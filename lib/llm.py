@@ -166,8 +166,13 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
     if fixed_reply:
         parts.append("[코드가 이미 고객에게 보낸 문장 — 반복하지 말 것]\n" + fixed_reply)
     if upsell:
-        parts.append("[무료배송까지 %s원 남음 — 지침이 허용하면 추가 구매를 제안할 수 있다]"
-                     % f"{upsell['gap']:,}")
+        rows = "\n".join("  - %s %s원" % (s["name"], f"{s['price']:,}")
+                         for s in upsell.get("suggestions") or [])
+        parts.append(
+            ("[무료배송까지 %s원 남음 — 자연스럽게 추가 구매를 권해볼 수 있다]\n"
+             "%s 이상이면 배송비가 0원이 된다. 아래 상품만 제안한다. 목록에 없는 상품을 지어내지 않는다.\n%s\n"
+             "강요하지 않는다. 한 문장으로 가볍게 권하고, 고객이 원하지 않으면 더 언급하지 않는다.")
+            % (f"{upsell['gap']:,}", f"{upsell['threshold']:,}원", rows))
 
     if pending:
         want = []

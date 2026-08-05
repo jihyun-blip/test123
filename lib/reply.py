@@ -208,13 +208,30 @@ def _invoice_text(quote, policies):
     return "\n".join(out)
 
 
-def upsell_context(quote, policies):
-    """무료배송 기준에 못 미치면 얼마가 모자란지 알려준다.
-    실제 제안 문장은 지침(RECIPE_SUGGEST 등)에 따라 LLM 이 만든다."""
+def upsell_context(quote, policies, catalog, exclude=(), top=3):
+    """무료배송까지 얼마가 모자란지, 무엇을 더 담으면 넘기는지 계산한다.
+
+    후보는 반드시 실제 DB 행에서 뽑는다. 이걸 안 주면 LLM 이 없는 상품을 지어낸다.
+    권유 문장 자체는 지침(UPSELL_FREE_SHIPPING, RECIPE_SUGGEST)에 따라 LLM 이 만든다."""
+    if str(policies.get("UPSELL_FREE_SHIPPING", "허용")).strip() != "허용":
+        return None
+
     threshold = policies.get_int("FREE_SHIPPING_THRESHOLD", 0)
     if not threshold or quote["total"] is None or quote["shipping"] == 0:
         return None
+
     gap = threshold - quote["subtotal"]
     if gap <= 0:
         return None
-    return {"threshold": threshold, "gap": gap}
+
+    priced = [(c, catalog.price(c)) for c in catalog.items
+              if catalog.price(c) and c not in exclude]
+    # 하나만 더 담아도 기준을 넘기는 상품을 싼 순으로. 없으면 비싼 순으로 보여준다.
+    over = sorted([x for x in priced if x[1] >= gap], key=lambda x: x[1])[:top]
+    if not over:
+        over = sorted(priced, key=lambda x: -x[1])[:top]
+
+    return {
+        "threshold": threshold, "gap": gap,
+        "suggestions": [{"name": catalog.display(c), "price": p} for c, p in over],
+    }

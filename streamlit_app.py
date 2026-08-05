@@ -165,8 +165,10 @@ with tab_chat:
         # 넘기면 LLM 이 되물음과 정보 요청을 한꺼번에 해버린다.
         kind_before = RP.stage(ss.state, ss.state.quote(CAT, P), CAT, P)
         pend_before = None if kind_before in RP.ASK_STAGES else RP.pending(ss.state, P)
+        in_cart = {l.match.code for l in ss.state.lines if l.match and l.match.code}
+        upsell = RP.upsell_context(ss.state.quote(CAT, P), P, CAT, exclude=in_cart)
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode,
-                              history=ss.history, pending=pend_before)
+                              history=ss.history, pending=pend_before, upsell=upsell)
 
         t0 = time.time()
         usage, raw, out, err = {}, "", None, None
