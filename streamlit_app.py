@@ -143,7 +143,7 @@ with tab_chat:
         system = LLM.build_system(P, mode)
 
         # 1차 호출 — 발화에서 구조화된 데이터만 뽑는다
-        user = LLM.build_user(prompt, ss.state, CAT, cand, mode)
+        user = LLM.build_user(prompt, ss.state, CAT, cand, mode, history=ss.history)
 
         t0 = time.time()
         usage, raw, out, err = {}, "", None, None

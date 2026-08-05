@@ -124,8 +124,18 @@ def build_system(policies, mode):
     return "\n".join(lines)
 
 
-def build_user(text, state, catalog, cand_codes, mode, fixed_reply=None, upsell=None):
+def build_user(text, state, catalog, cand_codes, mode, history=None,
+               fixed_reply=None, upsell=None, recent=4):
     parts = []
+
+    # 전체 이력을 재전송하지 않는다. 최근 N턴만 보낸다.
+    # 직전에 무엇을 물었는지 모르면 '후지요' 같은 답을 해석할 수 없다.
+    if history:
+        conv = []
+        for h in history[-recent:]:
+            conv.append("  고객: " + str(h.get("user") or ""))
+            conv.append("  챗봇: " + str(h.get("bot") or "").replace("\n", " / "))
+        parts.append("[최근 대화]\n" + "\n".join(conv))
 
     if fixed_reply:
         parts.append("[코드가 이미 고객에게 보낸 문장 — 반복하지 말 것]\n" + fixed_reply)
@@ -138,8 +148,15 @@ def build_user(text, state, catalog, cand_codes, mode, fixed_reply=None, upsell=
         for l in state.lines:
             mark = ""
             if l.rejected:
-                alts = ", ".join("%s(%s)" % (c, catalog.display(c)) for c in l.alternatives)
-                mark = " ← 고객이 아니라고 함. 후보: %s" % (alts or "없음")
+                alts = ", ".join("%s=%s" % (c, catalog.display(c)) for c in l.alternatives)
+                mark = (" ← 고객이 아니라고 해서 되묻는 중. 고객이 하나를 고르면 "
+                        'op="choose" 와 chosen_code 로 돌려준다. 후보: %s' % (alts or "없음"))
+            elif l.match and l.match.status == M.AMBIGUOUS:
+                # 코드를 알려주지 않으면 고객이 골라도 chosen_code 를 채울 수 없다
+                opts = ", ".join("%s=%s" % (c, catalog.display(c)) for c in l.match.candidates)
+                mark = (" ← 어느 상품인지 되묻는 중. 고객이 하나를 고르면 "
+                        'op="choose", name_hint="%s", chosen_code=해당코드 로 돌려준다. 후보: %s'
+                        % (l.key, opts))
             cur.append("  - %s ×%s%s" % (l.key, l.quantity, mark))
         if cur:
             parts.append("[현재까지 담긴 품목]\n" + "\n".join(cur))
