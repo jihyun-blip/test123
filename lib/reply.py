@@ -39,6 +39,17 @@ def won(n):
     return "%s원" % f"{int(n):,}"
 
 
+def called(line, catalog):
+    """고객에게 그 품목을 뭐라고 부를지.
+
+    이미 어느 상품인지 확정됐으면 상품명으로 부른다.
+    고객이 라벨코드를 적었거나 사진에서 코드를 읽어온 경우, 고객 표현을 그대로 쓰면
+    코드가 노출되거나 코드를 지운 빈 문자열이 남는다."""
+    if line.match and line.match.status == M.CONFIRMED and line.match.code:
+        return catalog.display(line.match.code)
+    return spoken(line.key)
+
+
 def spoken(expr):
     """고객에게 되읊을 표현. 내부 품목코드는 지운다.
     코드는 우리 식별자일 뿐이고, 고객은 그게 무엇인지 모른다."""
@@ -136,7 +147,7 @@ def _body(state, quote, catalog, policies):
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
         return ("%s는 몇 개 필요하신가요?"
-                % ", ".join("'%s'" % spoken(l.key) for l in no_qty), "quantity_ask")
+                % ", ".join(called(l, catalog) for l in no_qty), "quantity_ask")
 
     if quote["blocked"]:
         miss = [r["표현"] for r in quote["rows"] if r["단가"] is None]
