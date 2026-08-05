@@ -56,10 +56,19 @@ class SchemaError(Exception):
     """최소 컬럼이 없을 때. 실행을 멈추고 사용자에게 무엇이 없는지 보여준다."""
 
 
+def secret(key, default=None):
+    """Secrets 가 아예 설정되지 않은 환경에서도 앱이 죽지 않게 한다.
+    실험 중 앱이 멈추면 관찰 흐름이 끊기므로, 없으면 조용히 기본값으로 넘어간다."""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
 def is_mock():
     """시트 ID 가 하나라도 비어 있으면 목 모드로 본다."""
     for key, _ in SOURCES.values():
-        if not st.secrets.get(key):
+        if not secret(key):
             return True
     return False
 
@@ -86,7 +95,7 @@ def load(name):
         raise KeyError("알 수 없는 소스: %s" % name)
 
     secret_key, tab = SOURCES[name]
-    sheet_id = st.secrets.get(secret_key)
+    sheet_id = secret(secret_key)
 
     if sheet_id:
         df = _fetch_remote(sheet_id, tab, _ttl_bucket=TTL.get(name, 300))

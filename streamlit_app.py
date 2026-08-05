@@ -20,7 +20,7 @@ head = st.columns([2, 2, 2, 1.2])
 tester = head[0].selectbox("테스터", TESTERS)
 mode = head[1].radio("지식 수준", ["전체", "축소"], horizontal=True,
                      help="축소 모드는 외부 개발사가 실제로 갖게 될 수준을 재현합니다")
-model = head[2].selectbox("모델", st.secrets.get("MODELS", ["(목 모드)"]))
+model = head[2].selectbox("모델", sheets.secret("MODELS", ["(목 모드)"]))
 if head[3].button("DB 새로고침", use_container_width=True):
     sheets.clear_cache()
     st.rerun()
