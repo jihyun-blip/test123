@@ -105,12 +105,38 @@ function doPost(e) {
 
 
 /**
- * 배포가 살아 있는지, 각 탭의 헤더가 무엇인지 브라우저에서 바로 확인하기 위한 것.
- * 배포 URL 뒤에 ?token=... 을 붙여 열면 된다.
+ * ?token=...            배포 상태와 각 탭의 헤더를 돌려준다
+ * ?token=...&tab=이름   그 탭의 행을 헤더 기준 객체 배열로 돌려준다
+ *
+ * 로그 시트를 비공개로 유지하면서도 보고서 화면이 집계할 수 있게 하는 통로다.
+ * 시트를 공개로 바꾸면 테스트 대화의 주소·전화번호가 링크만으로 열린다.
  */
 function doGet(e) {
   if (!e || !e.parameter || e.parameter.token !== SECRET_TOKEN) {
     return json({ ok: false, error: 'BAD_TOKEN' });
+  }
+
+  var want = e.parameter.tab;
+  if (want) {
+    var sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(want);
+    if (!sh) return json({ ok: false, error: 'TAB_NOT_FOUND', available: tabNames() });
+
+    var lastRow = sh.getLastRow();
+    var lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return json({ ok: true, tab: want, rows: [] });
+
+    var values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    var head = values[0].map(function (h) { return String(h).trim(); });
+
+    var rows = [];
+    for (var r = 1; r < values.length; r++) {
+      var obj = {};
+      for (var c = 0; c < head.length; c++) {
+        if (head[c]) obj[head[c]] = values[r][c];
+      }
+      rows.push(obj);
+    }
+    return json({ ok: true, tab: want, rows: rows });
   }
 
   var tabs = {};

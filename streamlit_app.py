@@ -5,11 +5,15 @@
 이 도구의 산출물은 점수가 아니라 "이 컬럼이 필요하다", "이 지침이 필요하다"는 목록이다.
 화면은 보고서 / 대화 / 판정 / 데이터 네 탭으로 나뉜다.
 """
+import time
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
 from lib import flags as FL
 from lib import juso
+from lib import logs as LOG
 from lib import llm as LLM
 from lib import matching as M
 from lib import policies as pol
@@ -37,8 +41,14 @@ def init():
     ss.setdefault("history", [])      # [{turn, user, bot, out, diff, flags, detect, usage, model}]
     ss.setdefault("images", [])       # 누적 업로드 이미지
     ss.setdefault("ended", False)
-    ss.setdefault("records", [])      # 종료된 대화들의 판정 기록
+    ss.setdefault("records", [])      # 로그 미설정 시 쓰는 세션 내 판정 기록
     ss.setdefault("conv_no", 1)
+    ss.setdefault("started_at", now())
+    ss.setdefault("log_msgs", [])
+
+
+def now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
 def reset_conversation():
@@ -47,6 +57,7 @@ def reset_conversation():
     ss.history = []
     ss.images = []
     ss.ended = False
+    ss.started_at = now()
 
 
 init()
@@ -122,6 +133,7 @@ with tab_chat:
         # 1차 호출 — 발화에서 구조화된 데이터만 뽑는다
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode)
 
+        t0 = time.time()
         usage, raw, out, err = {}, "", None, None
         if API_KEY:
             try:
@@ -137,6 +149,8 @@ with tab_chat:
             out = LLM.mock(prompt, CAT, turn)
             usage = usage or {"input": LLM.estimate_tokens(system + user),
                               "output": 0, "estimated": True}
+
+        latency_ms = int((time.time() - t0) * 1000)
 
         diff = ss.state.apply(out, turn)
         ss.state.rematch(CAT, P, mode)
@@ -162,6 +176,7 @@ with tab_chat:
             "turn": turn, "user": prompt, "bot": bot, "fixed": fixed, "kind": kind,
             "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw, "error": err,
             "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
+            "at": now(), "latency_ms": latency_ms, "addr_api": dict(ss.state.addr_api or {}),
         })
         st.rerun()
 
@@ -290,30 +305,118 @@ with tab_verdict:
         note = st.text_area("관찰 메모", placeholder="무엇이 부족했는지, 어떤 지침이 필요한지")
 
         if st.button("판정 저장", type="primary"):
-            ss.records.append({
-                "conv_no": ss.conv_no, "tester": tester, "mode": mode_label, "model": model,
-                "turns": len(ss.history),
-                "images": len(ss.images),
+            sources = {
+                "invoice": "image" if any(l.source == "image" for l in state.lines) else "text",
+                "address": state.address_base.source or "text",
+                "receiver": state.receiver.source or "text",
+                "phone": state.phone.source or "text",
+            }
+            finals = {
+                "invoice": "; ".join("%s×%s" % (r["매칭"], r["수량"]) for r in quote["rows"]),
+                "address": "%s %s" % (state.address_base.value or "",
+                                      state.address_detail.value or ""),
+                "receiver": state.receiver.value or "",
+                "phone": state.phone.value or "",
+            }
+            for k in verdicts:
+                verdicts[k]["final_value"] = finals.get(k, "")
+
+            conv_id = "%s-%s-%03d" % (tester, ss.started_at.replace(" ", "_").replace(":", ""),
+                                      ss.conv_no)
+
+            rec = {
+                "conversation_id": conv_id, "conv_no": ss.conv_no, "tester": tester,
+                "mode": mode_label, "model": model,
+                "turns": len(ss.history), "images": len(ss.images),
                 "tokens_in": sum(h["usage"].get("input", 0) or 0 for h in ss.history),
                 "tokens_out": sum(h["usage"].get("output", 0) or 0 for h in ss.history),
-                "verdicts": verdicts,
-                "sources": {
-                    "invoice": "image" if any(l.source == "image" for l in state.lines) else "text",
-                    "address": state.address_base.source or "text",
-                    "receiver": state.receiver.source or "text",
-                    "phone": state.phone.source or "text",
-                },
-                "note": note,
-            })
+                "verdicts": verdicts, "sources": sources, "note": note,
+            }
+            ss.records.append(rec)
+
+            # 시트에도 남긴다. 실패해도 앱을 멈추지 않고 세션 기록은 그대로 유지된다.
+            msgs = []
+            if LOG.configured():
+                bundle = LOG.build_rows(
+                    conv_id, tester, mode_label, model, state, quote, ss.history,
+                    verdicts, sources, note,
+                    policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
+                    started_at=ss.started_at, ended_at=now(),
+                    flag_settings={k: r.get("값") for k, r in P.flags.items()})
+                for tab, rows in bundle.items():
+                    ok, msg = LOG.write(tab, rows)
+                    msgs.append(("ok" if ok else "err", "%s — %s" % (tab, msg)))
+                LOG.clear_cache()
+            else:
+                msgs.append(("err", "로그 미설정 — 이 세션 안에서만 집계됩니다"))
+            ss.log_msgs = msgs
+
             ss.conv_no += 1
             reset_conversation()
-            st.success("저장했습니다. 새 대화를 시작할 수 있습니다.")
             st.rerun()
 
 
 # ================================================================== 보고서
+def records_from_sheet():
+    """로그 시트에서 두 테스터의 기록을 함께 읽어 보고서용 형태로 맞춘다."""
+    convs, e1 = LOG.read("conversations")
+    fvs, e2 = LOG.read("field_verdicts")
+    if e1 or e2 or convs.empty:
+        return [], (e1 or e2)
+
+    by_conv = {}
+    if not fvs.empty:
+        for r in fvs.to_dict("records"):
+            by_conv.setdefault(r.get("conversation_id"), []).append(r)
+
+    def num(v):
+        try:
+            return int(float(v))
+        except (TypeError, ValueError):
+            return 0
+
+    out = []
+    for c in convs.to_dict("records"):
+        cid = c.get("conversation_id")
+        verdicts, sources = {}, {}
+        for r in by_conv.get(cid, []):
+            k = r.get("field_type")
+            verdicts[k] = {"verdict": r.get("verdict") or "",
+                           "cause": r.get("cause_tag") or None}
+            sources[k] = r.get("source") or "text"
+        if not verdicts:
+            continue
+        out.append({
+            "conv_no": cid, "tester": c.get("tester_name", ""),
+            "mode": c.get("knowledge_mode", ""), "model": c.get("model", ""),
+            "turns": num(c.get("turn_count")), "images": num(c.get("image_count")),
+            "tokens_in": 0, "tokens_out": 0,
+            "verdicts": verdicts, "sources": sources, "note": c.get("note", ""),
+        })
+    return out, None
+
+
 with tab_report:
-    recs = ss.records
+    for kind, msg in ss.log_msgs:
+        (st.success if kind == "ok" else st.warning)(msg)
+
+    if LOG.configured():
+        recs, log_err = records_from_sheet()
+        if log_err:
+            st.warning("로그 시트를 읽지 못해 이 세션 기록만 보여줍니다 — %s" % log_err)
+            recs = ss.records
+        else:
+            st.caption("로그 시트에서 읽었습니다. 두 테스터의 기록이 함께 집계됩니다.")
+            # 토큰은 시트에 대화 단위로 남기지 않으므로 이 세션 값으로 보정한다
+            tok = {r["conversation_id"]: r for r in ss.records}
+            for r in recs:
+                m = tok.get(r["conv_no"])
+                if m:
+                    r["tokens_in"], r["tokens_out"] = m["tokens_in"], m["tokens_out"]
+    else:
+        recs = ss.records
+        st.warning("Apps Script 로그가 설정되지 않아 **이 브라우저 세션 안에서만** 집계됩니다. "
+                   "새로고침하면 사라지니 아래 CSV 다운로드로 받아두세요.")
 
     if not recs:
         st.info("아직 판정된 대화가 없습니다. **💬 대화** 탭에서 대화를 진행하고 "
