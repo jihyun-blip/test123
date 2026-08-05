@@ -30,6 +30,62 @@ _NO_THINKING = {}
 # 호출마다 새로 만들면 연결을 매번 다시 맺는다.
 _CLIENTS = {}
 
+# 모델이 스키마 강제를 받는지 한 번만 확인하고 기억한다.
+_USE_SCHEMA = {}
+
+_S = lambda **kw: dict(type="string", **kw)          # noqa: E731
+_NULLABLE_STR = _S(nullable=True)
+
+# 출력 구조를 모델 쪽에서 강제한다. 프롬프트로만 부탁하면 중괄호를 빠뜨린 채
+# 끝나는 일이 반복되고, 그 턴은 통째로 목 모드로 떨어져 관찰이 끊긴다.
+# 이 스키마는 우리 계약이라 시트 컬럼이 늘어도 바뀌지 않는다.
+RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": _S(),
+        "item_ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": _S(enum=["add", "update", "remove", "reject", "choose"]),
+                    "raw_text": _NULLABLE_STR,
+                    "name_hint": _NULLABLE_STR,
+                    "quantity": {"type": "number", "nullable": True},
+                    "unit_expr": _NULLABLE_STR,
+                    "label_code": _NULLABLE_STR,
+                    "printed_name": _NULLABLE_STR,
+                    "chosen_code": _NULLABLE_STR,
+                    "source": _NULLABLE_STR,
+                    "source_ref": _NULLABLE_STR,
+                },
+                "required": ["op"],
+            },
+        },
+        "receiver": {"type": "object", "nullable": True, "properties": {
+            "value": _NULLABLE_STR, "source": _NULLABLE_STR, "source_ref": _NULLABLE_STR}},
+        "phone": {"type": "object", "nullable": True, "properties": {
+            "value": _NULLABLE_STR, "source": _NULLABLE_STR, "source_ref": _NULLABLE_STR}},
+        "address": {"type": "object", "nullable": True, "properties": {
+            "base": _NULLABLE_STR, "detail": _NULLABLE_STR,
+            "source": _NULLABLE_STR, "source_ref": _NULLABLE_STR}},
+        "intent": _S(enum=["order", "question", "payment_claim", "info_provide",
+                           "complaint", "smalltalk", "other"]),
+        "handoff_request": {"type": "boolean"},
+        "angry": {"type": "boolean"},
+        "missing_info": {"type": "array", "items": {"type": "object", "properties": {
+            "asked": _NULLABLE_STR, "needed": _NULLABLE_STR,
+            "found": {"type": "boolean", "nullable": True}}}},
+        "used_refs": {"type": "object", "properties": {
+            "products": {"type": "array", "items": _S()},
+            "synonyms": {"type": "array", "items": _S()},
+            "policies": {"type": "array", "items": _S()}}},
+        "images": {"type": "array", "items": {"type": "object", "properties": {
+            "ref": _NULLABLE_STR, "kind": _NULLABLE_STR, "read": _NULLABLE_STR}}},
+    },
+    "required": ["reply", "item_ops", "intent"],
+}
+
 OUTPUT_CONTRACT = """\
 반드시 아래 JSON 하나만 출력한다. 설명 문장을 덧붙이지 않는다.
 
@@ -339,6 +395,23 @@ def _call_once(api_key, model, system, user, images=None):
         "response_mime_type": "application/json",
         "temperature": 0.2,
     }
+
+    # 스키마를 붙이면 모델이 구조를 어길 수 없다. 받지 않는 모델이면 한 번만 확인하고 뺀다.
+    if _USE_SCHEMA.get(model, True):
+        try:
+            return _generate(client, types, model, contents,
+                             dict(cfg, response_schema=RESPONSE_SCHEMA), system, user)
+        except Exception as e:
+            msg = str(e).lower()
+            if not any(k in msg for k in ("schema", "response_schema", "invalid_argument",
+                                          "unsupported", "unknown field")):
+                raise
+            _USE_SCHEMA[model] = False
+
+    return _generate(client, types, model, contents, cfg, system, user)
+
+
+def _generate(client, types, model, contents, cfg, system, user):
 
     # 이 작업은 추론이 아니라 추출이다. 사고 단계를 끄면 응답이 빨라지고,
     # 사고 파트가 섞여 JSON 파싱이 깨지는 일도 줄어든다.

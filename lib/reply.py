@@ -128,7 +128,7 @@ def missing_required(state, policies):
 def build(state, quote, catalog, policies, history):
     """반환값은 (고정 문장, 종류). 인사는 여기서 붙이지 않는다.
     잡담 답변이 앞에 오는 경우가 있어, 조립이 끝난 뒤 맨 앞에 붙여야 한다."""
-    return _body(state, quote, catalog, policies)
+    return _body(state, quote, catalog, policies, history)
 
 
 def stage(state, quote, catalog, policies):
@@ -143,7 +143,11 @@ def stage(state, quote, catalog, policies):
         state.invoice_sig = keep
 
 
-def _body(state, quote, catalog, policies):
+def _asked_before(history, phrase):
+    return any(phrase in (h.get("bot") or "") for h in (history or []))
+
+
+def _body(state, quote, catalog, policies, history=None):
     """우선순위가 있다. 모호한 항목이 남아 있는데 거래명세서를 먼저 내밀면
     고객이 잘못된 상품으로 입금한다. 되물음이 항상 앞선다."""
     lines = state.lines
@@ -187,8 +191,13 @@ def _body(state, quote, catalog, policies):
     if no_qty:
         names = ", ".join(called(l, catalog) for l in no_qty)
         if len(no_qty) > 1:
-            # 여러 개를 한 번에 물으면 고객이 숫자 하나만 답해 또 모호해진다
-            return ("%s 각각 몇 개씩 필요하신가요?" % names, "quantity_ask")
+            ask = "%s 각각 몇 개씩 필요하신가요?" % names
+            # 같은 질문을 이미 했는데 또 물어야 한다면 답하는 법을 예시로 보여준다.
+            # 숫자 하나만 답하면 어느 품목인지 알 수 없어 계속 되묻게 된다.
+            if _asked_before(history, "몇 개"):
+                ask += "\n(예: %s 처럼 알려주세요)" % ", ".join(
+                    "%s %d개" % (called(l, catalog), i + 1) for i, l in enumerate(no_qty))
+            return (ask, "quantity_ask")
         return ("%s 몇 개 필요하신가요?" % eun(names), "quantity_ask")
 
     if quote["blocked"]:
