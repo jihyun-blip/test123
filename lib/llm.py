@@ -441,13 +441,16 @@ def call(api_key, model, system, user, images=None, attempts=3, schema="main"):
     last = None
     for i in range(attempts):
         try:
-            return _call_once(api_key, model, system, user, images, schema)
+            out, raw, usage = _call_once(api_key, model, system, user, images, schema)
+            if i:
+                usage["retries"] = i
+            return out, raw, usage
         except Exception as e:
             last = e
             msg = str(e).lower()
             if i == attempts - 1 or not any(k in msg for k in RETRYABLE):
                 raise
-            _t.sleep(1.5 * (i + 1))
+            _t.sleep(0.8 * (i + 1))
     raise last
 
 

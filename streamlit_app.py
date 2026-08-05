@@ -24,7 +24,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.14"
+APP_VERSION = "2026-08-05.15"
 
 TESTERS = ["이지현", "김경민"]
 
@@ -125,7 +125,9 @@ with tab_chat:
                 # 마크다운은 단일 개행을 무시한다. 거래명세서가 한 줄로 붙지 않게 한다.
                 st.markdown(h["bot"].replace("\n", "  \n"))
                 if h.get("latency_ms"):
-                    st.caption("%.1f초" % (h["latency_ms"] / 1000))
+                    retries = (h.get("usage") or {}).get("retries")
+                    st.caption("%.1f초%s" % (h["latency_ms"] / 1000,
+                                             " · 모델 과부하로 %d회 재시도" % retries if retries else ""))
                 if h.get("error"):
                     st.error("LLM 미사용 · 목 모드로 대체됨 — %s" % h["error"])
                     if h.get("raw"):
