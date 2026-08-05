@@ -39,6 +39,43 @@ def won(n):
     return "%s원" % f"{int(n):,}"
 
 
+# 숫자를 소리 내어 읽었을 때 받침이 있는지. 영/일/삼/육/칠/팔 은 있고 이/사/오/구 는 없다.
+_DIGIT_BATCHIM = {"0": True, "1": True, "3": True, "6": True, "7": True, "8": True,
+                  "2": False, "4": False, "5": False, "9": False}
+
+
+def _has_batchim(word):
+    w = str(word or "").rstrip("'\"), ]}").strip()
+    if not w:
+        return False
+    ch = w[-1]
+    if "가" <= ch <= "힣":
+        return (ord(ch) - 0xAC00) % 28 != 0
+    if ch.isdigit():
+        return _DIGIT_BATCHIM.get(ch, False)
+    if ch.isalpha():
+        # 영문은 소리 기준. 자음으로 끝나면 받침이 있는 것으로 본다
+        return ch.lower() not in "aeiou"
+    return False
+
+
+def josa(word, with_batchim, without):
+    """'삼겹살는' 같은 어색한 조사를 막는다. 상품명은 시트에서 오므로 받침을 미리 알 수 없다."""
+    return with_batchim if _has_batchim(word) else without
+
+
+def eun(word):
+    return word + josa(word, "은", "는")
+
+
+def i_ga(word):
+    return word + josa(word, "이", "가")
+
+
+def eul(word):
+    return word + josa(word, "을", "를")
+
+
 def called(line, catalog):
     """고객에게 그 품목을 뭐라고 부를지.
 
@@ -116,14 +153,16 @@ def _body(state, quote, catalog, policies):
         if l.rejected and l.alternatives:
             opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                               for c in l.alternatives)
-            return ("말씀하신 '%s'는 %s 중 어떤 것일까요?" % (spoken(l.key), opts), "reject_ask")
+            return ("말씀하신 %s %s 중 어떤 것일까요?"
+                    % (eun("'%s'" % spoken(l.key)), opts), "reject_ask")
 
     if policies.get("AMBIGUOUS_ALIAS") == "되물음":
         for l in lines:
             if l.match and l.match.status == M.AMBIGUOUS:
                 opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                                   for c in l.match.candidates)
-                return ("'%s'는 %s 중 어떤 것을 말씀하시는 걸까요?" % (spoken(l.key), opts), "ambiguous_ask")
+                return ("%s %s 중 어떤 것을 말씀하시는 걸까요?"
+                        % (eun("'%s'" % spoken(l.key)), opts), "ambiguous_ask")
 
     # DB 에 없는 표현 — "못 찾았다"로 끝내지 않고 가장 가까운 상품을 들이민다.
     # 되물음은 대화를 끝내는 것이 아니라 거래명세서를 완성하려고 정보를 채우는 과정이다.
@@ -134,11 +173,11 @@ def _body(state, quote, catalog, policies):
                 if near:
                     opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                                       for c in near)
-                    return ("'%s'는 이 중 어떤 것일까요? %s\n"
+                    return ("%s 이 중 어떤 것일까요? %s\n"
                             "이 중에 없으면 사진 보내주시면 찾아드릴게요."
-                            % (spoken(l.key), opts), "notfound_ask")
-                return ("'%s'가 어떤 상품인지 조금만 더 알려주시겠어요? 사진을 보내주셔도 좋아요."
-                        % spoken(l.key), "notfound_ask")
+                            % (eun("'%s'" % spoken(l.key)), opts), "notfound_ask")
+                return ("%s 어떤 상품인지 조금만 더 알려주시겠어요? 사진을 보내주셔도 좋아요."
+                        % i_ga("'%s'" % spoken(l.key)), "notfound_ask")
 
     if not lines:
         return ("어떤 상품 찾으세요? 상품명을 말씀해주시거나 사진을 보내주시면 담아드릴게요.",
@@ -146,8 +185,8 @@ def _body(state, quote, catalog, policies):
 
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
-        return ("%s는 몇 개 필요하신가요?"
-                % ", ".join(called(l, catalog) for l in no_qty), "quantity_ask")
+        names = ", ".join(called(l, catalog) for l in no_qty)
+        return ("%s 몇 개 필요하신가요?" % eun(names), "quantity_ask")
 
     if quote["blocked"]:
         miss = [r["표현"] for r in quote["rows"] if r["단가"] is None]
@@ -192,7 +231,7 @@ def pending(state, policies):
 def fallback_ask(pend):
     """LLM 이 아무것도 묻지 않았을 때만 쓰는 안전망. 흐름이 멈추지 않게 한다."""
     if pend["missing"]:
-        return "%s를 알려주시겠어요?" % ", ".join(pend["missing"])
+        return "%s 알려주시겠어요?" % eul(", ".join(pend["missing"]))
     if pend["detail"]:
         return "동·호수도 알려주시면 배송이 더 정확해요."
     return ""
