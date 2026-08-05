@@ -30,6 +30,7 @@ CONSUMER = {
     "SMALLTALK":               "prompt",
     "RECIPE_SUGGEST":          "prompt",
     "UPSELL_FREE_SHIPPING":    "both",
+    "UPSELL_MAX_TIMES":        "code",
     "SHOW_LINE_BASIS":         "both",
     "NO_PAYMENT_JUDGEMENT":    "both",
     "NO_REPEAT_QUESTION":      "both",

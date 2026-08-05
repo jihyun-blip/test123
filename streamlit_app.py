@@ -165,8 +165,13 @@ with tab_chat:
         # 넘기면 LLM 이 되물음과 정보 요청을 한꺼번에 해버린다.
         kind_before = RP.stage(ss.state, ss.state.quote(CAT, P), CAT, P)
         pend_before = None if kind_before in RP.ASK_STAGES else RP.pending(ss.state, P)
-        in_cart = {l.match.code for l in ss.state.lines if l.match and l.match.code}
-        upsell = RP.upsell_context(ss.state.quote(CAT, P), P, CAT, exclude=in_cart)
+        # 추가 구매 권유는 정해진 횟수만. 고객이 받아들이든 아니든 다시 꺼내지 않는다.
+        upsell = None
+        if ss.state.upsell_shown < P.get_int("UPSELL_MAX_TIMES", 1):
+            in_cart = {l.match.code for l in ss.state.lines if l.match and l.match.code}
+            upsell = RP.upsell_context(ss.state.quote(CAT, P), P, CAT, exclude=in_cart)
+            if upsell:
+                ss.state.upsell_shown += 1
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode,
                               history=ss.history, pending=pend_before, upsell=upsell)
 

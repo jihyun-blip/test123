@@ -94,6 +94,7 @@ class OrderState:
         self.images = []         # [{ref, kind, read}] LLM 이 판별한 이미지 종류
         self.payment_proof = None # 입금증 이미지 ref. 받았어도 입금 확인은 사람이 한다
         self.invoice_sig = None  # 마지막으로 보여준 거래명세서의 지문
+        self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     # ---------------------------------------------------------------- 누적
     def apply(self, out, turn):
