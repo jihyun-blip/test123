@@ -28,6 +28,11 @@ FIELD_ALIASES = {
 }
 DEFAULT_REQUIRED = "수령인,전화,주소"
 
+# 품목이 아직 확정되지 않아 코드가 되묻고 있는 단계.
+# 이때는 다른 것을 함께 묻지 않는다. 한 턴에 질문은 하나여야 한다.
+ASK_STAGES = {"order_ask", "ambiguous_ask", "reject_ask",
+              "notfound_ask", "quantity_ask", "blocked"}
+
 
 def won(n):
     return "%s원" % f"{int(n):,}"
@@ -75,6 +80,18 @@ def build(state, quote, catalog, policies, history):
         body = GREETING + ("\n" + body if body else "")
 
     return body, kind
+
+
+def stage(state, quote, catalog, policies):
+    """지금이 어느 단계인지만 본다. 상태를 바꾸지 않는다.
+
+    build() 는 거래명세서를 보여줬다는 표시를 남기므로,
+    LLM 호출 전에 단계만 알고 싶을 때 이 함수를 쓴다."""
+    keep = state.invoice_sig
+    try:
+        return _body(state, quote, catalog, policies)[1]
+    finally:
+        state.invoice_sig = keep
 
 
 def _body(state, quote, catalog, policies):

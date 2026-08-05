@@ -143,7 +143,10 @@ with tab_chat:
         system = LLM.build_system(P, mode)
 
         # 1차 호출 — 발화에서 구조화된 데이터만 뽑는다
-        pend_before = RP.pending(ss.state, P)
+        # 품목이 확정되기 전에는 비어 있는 정보 목록을 넘기지 않는다.
+        # 넘기면 LLM 이 되물음과 정보 요청을 한꺼번에 해버린다.
+        kind_before = RP.stage(ss.state, ss.state.quote(CAT, P), CAT, P)
+        pend_before = None if kind_before in RP.ASK_STAGES else RP.pending(ss.state, P)
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode,
                               history=ss.history, pending=pend_before)
 
@@ -195,6 +198,12 @@ with tab_chat:
         # 거래명세서·되물음은 코드가 조립한다. LLM 에게 금액을 맡기지 않는다.
         fixed, kind = RP.build(ss.state, quote, CAT, P, ss.history)
         tail = (out.get("reply") or "").strip() if err is None else ""
+
+        # 코드가 품목을 되묻는 중이면 LLM 의 덧붙임을 버린다.
+        # 한 턴에 질문이 둘이면 고객이 무엇에 답해야 할지 모르고,
+        # 확정되지도 않았는데 "담아드렸어요" 같은 말이 섞인다.
+        if kind in RP.ASK_STAGES:
+            tail = ""
 
         # 무엇이 비었는지는 코드가 알고, 묻는 문장은 LLM 이 만든다.
         # LLM 이 묻지 않고 넘어가면 흐름이 멈추므로 그때만 대체 문장을 붙인다.
