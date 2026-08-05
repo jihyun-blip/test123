@@ -186,6 +186,9 @@ def _body(state, quote, catalog, policies):
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
         names = ", ".join(called(l, catalog) for l in no_qty)
+        if len(no_qty) > 1:
+            # 여러 개를 한 번에 물으면 고객이 숫자 하나만 답해 또 모호해진다
+            return ("%s 각각 몇 개씩 필요하신가요?" % names, "quantity_ask")
         return ("%s 몇 개 필요하신가요?" % eun(names), "quantity_ask")
 
     if quote["blocked"]:
