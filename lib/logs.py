@@ -35,7 +35,7 @@ def write(tab, rows):
         r = requests.post(
             sheets.secret("APPS_SCRIPT_URL"),
             json={"token": sheets.secret("APPS_SCRIPT_TOKEN"), "tab": tab, "rows": rows},
-            timeout=30,
+            timeout=20,
         )
         r.raise_for_status()
         data = r.json()

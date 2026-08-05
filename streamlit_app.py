@@ -413,9 +413,8 @@ with tab_verdict:
                 ss.saved = None
                 reset_conversation()
                 st.rerun()
-            st.stop()
 
-        if st.button("판정 저장", type="primary"):
+        elif st.button("판정 저장", type="primary"):
             sources = {
                 "invoice": "image" if any(l.source == "image" for l in state.lines) else "text",
                 "address": state.address_base.source or "text",
@@ -449,6 +448,7 @@ with tab_verdict:
             ss.records.append(rec)
 
             # 시트에도 남긴다. 실패해도 앱을 멈추지 않고 세션 기록은 그대로 유지된다.
+            # 탭이 여섯 개라 수십 초 걸릴 수 있으므로 진행 상황을 그 자리에 보여준다.
             msgs = []
             if LOG.configured():
                 try:
@@ -458,10 +458,13 @@ with tab_verdict:
                         policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
                         started_at=ss.started_at, ended_at=now(),
                         flag_settings={k: r.get("값") for k, r in P.flags.items()})
-                    for tab, rows in bundle.items():
-                        ok, msg = LOG.write(tab, rows)
-                        msgs.append(("ok" if ok else "err", "%s — %s" % (tab, msg)))
-                    LOG.clear_cache()
+                    with st.status("시트에 기록하는 중…", expanded=True) as status:
+                        for tab, rows in bundle.items():
+                            st.write("%s 기록 중…" % tab)
+                            ok, msg = LOG.write(tab, rows)
+                            msgs.append(("ok" if ok else "err", "%s — %s" % (tab, msg)))
+                        LOG.clear_cache()
+                        status.update(label="기록 완료", state="complete", expanded=False)
                 except Exception as e:
                     # 시트 기록이 실패해도 세션 기록은 남는다. 조용히 넘어가지 않는다.
                     msgs.append(("err", "로그 기록 실패 — %s: %s" % (type(e).__name__, e)))
@@ -471,7 +474,14 @@ with tab_verdict:
 
             ss.conv_no += 1
             ss.saved = conv_id
-            st.rerun()
+
+            # 여기서 다시 그리면 화면이 첫 탭으로 튀어 저장됐는지 알 수 없다.
+            # 결과를 이 자리에 그대로 보여준다.
+            st.success("판정을 저장했습니다 — %s" % conv_id)
+            for kind_, msg in msgs:
+                (st.caption if kind_ == "ok" else st.warning)(msg)
+            st.info("이어서 새 대화를 하시려면 위의 **새 대화 시작** 버튼을 눌러주세요. "
+                    "(이 화면을 벗어났다 돌아오면 보입니다)")
 
 
 # ================================================================== 보고서
