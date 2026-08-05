@@ -143,7 +143,9 @@ with tab_chat:
         system = LLM.build_system(P, mode)
 
         # 1차 호출 — 발화에서 구조화된 데이터만 뽑는다
-        user = LLM.build_user(prompt, ss.state, CAT, cand, mode, history=ss.history)
+        pend_before = RP.pending(ss.state, P)
+        user = LLM.build_user(prompt, ss.state, CAT, cand, mode,
+                              history=ss.history, pending=pend_before)
 
         t0 = time.time()
         usage, raw, out, err = {}, "", None, None
@@ -170,6 +172,8 @@ with tab_chat:
                 continue
             ss.state.images = [i for i in ss.state.images if i.get("ref") != ref]
             ss.state.images.append(meta)
+            if meta.get("kind") == "payment" and not ss.state.payment_proof:
+                ss.state.payment_proof = ref
 
         latency_ms = int((time.time() - t0) * 1000)
 
@@ -186,18 +190,25 @@ with tab_chat:
                 usage["input"] = (usage.get("input") or 0) + (u2.get("input") or 0)
                 usage["output"] = (usage.get("output") or 0) + (u2.get("output") or 0)
 
-        # 주소가 새로 들어왔으면 검증한다. base 만 보내고 detail 은 사람이 확인한다.
-        if ss.state.address_base and not ss.state.addr_api.get("done"):
-            ss.state.addr_api = juso.search(ss.state.address_base.value, JUSO_KEY)
-            ss.state.zipno = ss.state.addr_api.get("zipno")
-            ss.state.road_addr = ss.state.addr_api.get("road_addr")
-
         quote = ss.state.quote(CAT, P)
 
         # 거래명세서·되물음은 코드가 조립한다. LLM 에게 금액을 맡기지 않는다.
         fixed, kind = RP.build(ss.state, quote, CAT, P, ss.history)
         tail = (out.get("reply") or "").strip() if err is None else ""
-        bot = "\n\n".join(x for x in (fixed, tail) if x) or "(응답 없음)"
+
+        # 무엇이 비었는지는 코드가 알고, 묻는 문장은 LLM 이 만든다.
+        # LLM 이 묻지 않고 넘어가면 흐름이 멈추므로 그때만 대체 문장을 붙인다.
+        pend_after = RP.pending(ss.state, P)
+        if kind in ("collecting", "invoice") and not tail:
+            fb = RP.fallback_ask(pend_after)
+            if fb:
+                fixed = "\n\n".join(x for x in (fixed, fb) if x)
+
+        # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
+        # 흐름을 되돌리는 코드 문장이 뒤에 붙어야 자연스럽다.
+        digression = out.get("intent") in ("smalltalk", "question", "complaint")
+        order = (tail, fixed) if (digression and tail) else (fixed, tail)
+        bot = "\n\n".join(x for x in order if x) or "(응답 없음)"
 
         fl = FL.evaluate(ss.state, quote, CAT, P, out, mode)
         prev_asked = bool(ss.history and "?" in (ss.history[-1]["bot"] or ""))
@@ -257,6 +268,12 @@ with tab_chat:
         if not ss.ended:
             if st.button("🧾 상담 완료 — 주문서 확정", type="primary", use_container_width=True,
                          disabled=not ss.history):
+                # 우편번호 검증은 대화 중에 하지 않는다. 확정 시점에 한 번만 조회하고
+                # 실패하면 주문서에 플래그로 남긴다.
+                if ss.state.address_base:
+                    ss.state.addr_api = juso.search(ss.state.address_base.value, JUSO_KEY)
+                    ss.state.zipno = ss.state.addr_api.get("zipno")
+                    ss.state.road_addr = ss.state.addr_api.get("road_addr")
                 ss.ended = True
                 st.rerun()
         else:

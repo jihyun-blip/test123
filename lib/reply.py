@@ -5,19 +5,32 @@
 거래명세서와 되물음 문장은 코드가 만든다. LLM 에게 맡기지 않는다.
 금액을 LLM 이 문장으로 쓰는 순간 환각이 가능해지고, 그때부터 주문서를 믿을 수 없다.
 
-LLM 이 맡는 것은 이 고정 블록 뒤에 붙는 확장(추가 구매 제안, 어조, 잡담 복귀)뿐이다.
-그 확장은 지침 DB 가 결정한다.
+이 파일은 대화의 흐름 자체를 붙잡는 역할도 한다.
+
+    주문 수집 → 거래명세서 → 필수 정보 수집 → 입금 안내 → 완료
+
+고객이 중간에 다른 질문으로 새더라도, 코드가 만드는 문장은 언제나
+"지금 이 흐름에서 다음에 필요한 것"이다. LLM 이 딴 얘기에 답하더라도
+그 뒤에 이 문장이 따라붙으므로 대화가 자연스럽게 제자리로 돌아온다.
 """
 import difflib
 
 from . import matching as M
 
+GREETING = "안녕하세요 고객님!"
+
+# 지침의 REQUIRED_FIELDS 값을 상태 필드와 화면 문구로 옮기는 표.
+# 흐름의 순서는 코드가 강제하고, 무엇을 필수로 볼지는 지침이 정한다.
+FIELD_ALIASES = {
+    "수령인": ("receiver", "받으실 분 성함"),
+    "전화": ("phone", "연락처"),
+    "주소": ("address_base", "배송지 주소"),
+}
+DEFAULT_REQUIRED = "수령인,전화,주소"
+
 
 def won(n):
     return "%s원" % f"{int(n):,}"
-
-
-GREETING = "안녕하세요 고객님!"
 
 
 def nearest(expr, catalog, top=3, floor=0.3):
@@ -27,6 +40,27 @@ def nearest(expr, catalog, top=3, floor=0.3):
         ((difflib.SequenceMatcher(None, expr, catalog.display(c)).ratio(), c)
          for c in catalog.items), reverse=True)
     return [c for r, c in scored[:top] if r >= floor]
+
+
+def invoice_sig(quote):
+    """거래명세서를 다시 보여줘야 하는지 판단하는 지문."""
+    return tuple(sorted((r["매칭"], r["수량"]) for r in quote["rows"])) + (quote["total"],)
+
+
+def required_fields(policies):
+    raw = str(policies.get("REQUIRED_FIELDS", DEFAULT_REQUIRED) or DEFAULT_REQUIRED)
+    out = []
+    for token in raw.split(","):
+        pair = FIELD_ALIASES.get(token.strip())
+        if pair:
+            out.append(pair)
+    return out or [FIELD_ALIASES[k] for k in ("수령인", "전화", "주소")]
+
+
+def missing_required(state, policies):
+    """매 턴 다시 계산한다. 고객이 순서와 무관하게 정보를 주더라도
+    이미 받은 것은 묻지 않고 아직 없는 것만 묻기 위해서다."""
+    return [(k, label) for k, label in required_fields(policies) if not getattr(state, k)]
 
 
 def build(state, quote, catalog, policies, history):
@@ -48,14 +82,13 @@ def _body(state, quote, catalog, policies):
     고객이 잘못된 상품으로 입금한다. 되물음이 항상 앞선다."""
     lines = state.lines
 
-    # 1. 고객이 아니라고 한 품목 — 같은 표현을 공유하는 상품을 후보로 제시
+    # ---------------------------------------------------------- 1단계 주문 수집
     for l in lines:
         if l.rejected and l.alternatives:
             opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                               for c in l.alternatives)
             return ("말씀하신 '%s'는 %s 중 어떤 것일까요?" % (l.key, opts), "reject_ask")
 
-    # 2. 유사어가 여러 상품에 걸린 항목 — 임의 선택 금지
     if policies.get("AMBIGUOUS_ALIAS") == "되물음":
         for l in lines:
             if l.match and l.match.status == M.AMBIGUOUS:
@@ -63,9 +96,8 @@ def _body(state, quote, catalog, policies):
                                   for c in l.match.candidates)
                 return ("'%s'는 %s 중 어떤 것을 말씀하시는 걸까요?" % (l.key, opts), "ambiguous_ask")
 
-    # 3. DB 에 없는 표현 — "못 찾았다"로 끝내지 않는다.
-    #    가장 가까운 상품을 후보로 들이밀어 고객이 고르게 한다. 되물음은 대화를 끝내는 것이
-    #    아니라 거래명세서를 완성하려고 부족한 정보를 채우는 과정이다.
+    # DB 에 없는 표현 — "못 찾았다"로 끝내지 않고 가장 가까운 상품을 들이민다.
+    # 되물음은 대화를 끝내는 것이 아니라 거래명세서를 완성하려고 정보를 채우는 과정이다.
     if policies.get("PRODUCT_NOT_FOUND") == "되물음":
         for l in lines:
             if l.match and l.match.status == M.NOT_FOUND:
@@ -80,21 +112,72 @@ def _body(state, quote, catalog, policies):
                         % l.key, "notfound_ask")
 
     if not lines:
-        return ("", "none")
+        return ("찾으시는 상품을 말씀해주시면 장바구니에 담아드릴게요. "
+                "상품 사진을 보내주셔도 됩니다.", "order_ask")
 
-    # 4. 수량을 말하지 않은 품목 — 거래명세서를 만들 수 없으므로 되묻는다
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
         return ("%s는 몇 개 필요하신가요?"
                 % ", ".join("'%s'" % l.key for l in no_qty), "quantity_ask")
 
-    # 5. 단가 없는 항목이 있으면 합계를 확정하지 않는다
     if quote["blocked"]:
         miss = [r["표현"] for r in quote["rows"] if r["단가"] is None]
         return ("%s의 가격을 확인 중이에요. 확인되는 대로 총액을 안내드릴게요."
                 % ", ".join(miss), "blocked")
 
-    # 6. 필요한 정보가 다 모였다 — 거래명세서를 조립한다
+    # ---------------------------------------------------------- 2단계 거래명세서
+    out = []
+    sig = invoice_sig(quote)
+    show_invoice = sig != state.invoice_sig
+    if show_invoice:
+        state.invoice_sig = sig
+        out.append(_invoice_text(quote, policies))
+
+    # ---------------------------------------------------------- 3단계 이후
+    # 무엇이 비었는지는 코드가 계산해 pending() 으로 LLM 에 넘기고,
+    # 그것을 묻는 문장은 LLM 이 만든다. 금액·상품 후보와 달리
+    # 정보 요청은 환각 위험이 없어 자연스러운 표현을 맡기는 편이 낫다.
+    if state.payment_proof:
+        # 입금 확인은 사람이 은행에서 한다. 코드도 LLM 도 확인됐다고 말하지 않는다.
+        out.append("입금증 받았습니다.")
+
+    pend = pending(state, policies)
+    if not (pend["missing"] or pend["detail"] or pend["proof"]):
+        out.append("주문해주셔서 감사합니다. 확인 후 빠르게 발송해드릴게요.")
+        return ("\n\n".join(out), "complete")
+
+    return ("\n\n".join(out), "invoice" if show_invoice else "collecting")
+
+
+def pending(state, policies):
+    """아직 채우지 못한 것. LLM 에게 넘길 목록이자, LLM 이 묻지 않았을 때 쓸 대체 문장의 근거."""
+    missing = [label for _, label in missing_required(state, policies)]
+
+    detail_rule = str(policies.get("ASK_ADDRESS_DETAIL", "권장") or "권장").strip()
+    want_detail = (not state.address_detail) and detail_rule != "생략" and bool(state.address_base)
+
+    want_proof = (not state.payment_proof) and not missing \
+        and str(policies.get("REQUEST_PAYMENT_PROOF", "Y")).upper() == "Y"
+
+    return {"missing": missing, "detail": want_detail, "detail_rule": detail_rule,
+            "proof": want_proof}
+
+
+def fallback_ask(pend):
+    """LLM 이 아무것도 묻지 않았을 때만 쓰는 안전망. 흐름이 멈추지 않게 한다."""
+    if pend["missing"]:
+        ask = "%s를 알려주시겠어요?" % ", ".join(pend["missing"])
+        if len(pend["missing"]) >= 3:
+            ask += " 주소가 적힌 사진을 보내주셔도 됩니다."
+        return ask
+    if pend["detail"]:
+        return "동·호수까지 알려주시면 더 정확하게 배송해드릴 수 있어요."
+    if pend["proof"]:
+        return "입금하신 뒤 입금증을 보내주시면 더 빠르게 처리해드릴 수 있어요."
+    return ""
+
+
+def _invoice_text(quote, policies):
     out = []
     for r in quote["rows"]:
         # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
@@ -108,12 +191,11 @@ def _body(state, quote, catalog, policies):
     elif threshold:
         out.append("배송비 0원 (%s 이상 무료배송)" % won(threshold))
 
-    account = policies.get("ACCOUNT_INFO", "")
     out.append("총 %s을 아래 계좌로 입금주시면 감사하겠습니다." % won(quote["total"]))
+    account = policies.get("ACCOUNT_INFO", "")
     if account:
         out.append(account)
-
-    return ("\n".join(out), "invoice")
+    return "\n".join(out)
 
 
 def upsell_context(quote, policies):

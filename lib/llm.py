@@ -125,7 +125,7 @@ def build_system(policies, mode):
 
 
 def build_user(text, state, catalog, cand_codes, mode, history=None,
-               fixed_reply=None, upsell=None, recent=4):
+               fixed_reply=None, upsell=None, pending=None, recent=4):
     parts = []
 
     # 전체 이력을 재전송하지 않는다. 최근 N턴만 보낸다.
@@ -142,6 +142,21 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
     if upsell:
         parts.append("[무료배송까지 %s원 남음 — 지침이 허용하면 추가 구매를 제안할 수 있다]"
                      % f"{upsell['gap']:,}")
+
+    if pending:
+        want = []
+        if pending.get("missing"):
+            want.append("아직 못 받은 필수 정보: " + ", ".join(pending["missing"]))
+        if pending.get("detail"):
+            want.append("상세주소(동·호)가 없음 — 요청 수준: %s" % pending.get("detail_rule", "권장"))
+        if pending.get("proof"):
+            want.append("입금증을 아직 못 받음")
+        if want:
+            parts.append(
+                "[아직 채우지 못한 것 — 이번 답변에서 자연스럽게 물어본다]\n  "
+                + "\n  ".join(want)
+                + "\n이미 받은 정보는 절대 다시 묻지 않는다. 고객이 다른 이야기를 했더라도"
+                  " 짧게 답한 뒤 위 항목을 물어 주문 흐름으로 돌아온다.")
 
     if state.lines or state.receiver or state.address_base:
         cur = []

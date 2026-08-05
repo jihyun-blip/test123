@@ -33,6 +33,9 @@ CONSUMER = {
     "NO_REPEAT_QUESTION":      "both",
     "NO_PRODUCT_FACT_GUESS":   "both",
     "SMALLTALK_RETURN":        "both",
+    "REQUIRED_FIELDS":         "code",
+    "ASK_ADDRESS_DETAIL":      "code",
+    "REQUEST_PAYMENT_PROOF":   "code",
 }
 
 # 플래그 값이 결정하는 흐름. 값을 바꾸면 대화 자체가 달라지므로

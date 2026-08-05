@@ -92,6 +92,8 @@ class OrderState:
         self.addr_api = {}       # 정제 전/후, 응답 요약. 관찰 패널이 그대로 보여준다
         self.phone_second = None # 이미지 전화번호 2차 판독값. 1차와 다르면 PHONE_MISMATCH
         self.images = []         # [{ref, kind, read}] LLM 이 판별한 이미지 종류
+        self.payment_proof = None # 입금증 이미지 ref. 받았어도 입금 확인은 사람이 한다
+        self.invoice_sig = None  # 마지막으로 보여준 거래명세서의 지문
 
     # ---------------------------------------------------------------- 누적
     def apply(self, out, turn):

@@ -12,6 +12,11 @@
 import re
 
 from . import matching as M
+from . import reply as R
+
+
+def missing_required_any(state, policies):
+    return bool(R.missing_required(state, policies))
 
 
 class Flag:
@@ -100,8 +105,14 @@ def evaluate(state, quote, catalog, policies, out, mode):
         add("HANDOFF_REQUEST", "고객이 상담원 연결을 명시적으로 요청")
     if out.get("angry"):
         add("ANGRY_CUSTOMER", "고객 불만·화남 감지")
-    if out.get("intent") == "payment_claim":
-        add("PAYMENT_UNCONFIRMED", "고객이 입금을 주장 — 상담원이 은행에서 직접 확인 필요")
+    # 입금증은 있어도 없어도 플래그가 뜬다. 있으면 대조 대상, 없으면 미완료다.
+    # 어느 쪽이든 상담원이 은행 내역을 봐야 하므로 검수 목록에서 빠지면 안 된다.
+    if state.payment_proof:
+        add("PAYMENT_PROOF_IMAGE", "입금증 이미지 수신(%s) — 은행 내역과 대조 필요" % state.payment_proof)
+    elif out.get("intent") == "payment_claim":
+        add("PAYMENT_UNCONFIRMED", "고객이 입금을 주장했으나 입금증 없음 — 상담원이 직접 확인 필요")
+    elif state.lines and not missing_required_any(state, policies):
+        add("PAYMENT_UNCONFIRMED", "주문 정보는 모였으나 입금증 미수신")
 
     return flags
 
