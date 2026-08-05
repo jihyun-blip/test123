@@ -212,6 +212,38 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
     return "\n\n".join(parts)
 
 
+def repair(s):
+    """닫는 괄호가 빠진 채로 끝난 JSON 을 이어 붙인다.
+
+    모델이 finish_reason=STOP 으로 정상 종료했는데도 마지막 } 를 빠뜨리는 일이 있다.
+    내용은 멀쩡한데 통째로 버리면 그 턴이 목 모드로 떨어져 관찰이 끊긴다."""
+    stack, in_str, esc = [], False, False
+    for ch in s:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+
+    out = s.rstrip()
+    if in_str:
+        out += '"'
+    out = re.sub(r",\s*$", "", out)          # 끝에 남은 쉼표
+    for ch in reversed(stack):
+        out += "}" if ch == "{" else "]"
+    return out
+
+
 def parse(raw):
     """모델이 코드펜스를 붙이거나 앞뒤에 말을 덧붙여도 JSON 을 건져낸다."""
     s = str(raw or "").strip()
@@ -220,10 +252,19 @@ def parse(raw):
         return json.loads(s)
     except Exception:
         pass
+
     m = re.search(r"\{.*\}", s, re.S)
     if m:
         try:
             return json.loads(m.group(0))
+        except Exception:
+            pass
+
+    # 여기까지 실패했다면 중간에 잘렸을 가능성이 크다. 괄호를 맞춰 한 번 더 시도한다.
+    i = s.find("{")
+    if i >= 0:
+        try:
+            return json.loads(repair(s[i:]))
         except Exception:
             pass
     return None
