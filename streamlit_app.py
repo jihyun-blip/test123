@@ -104,8 +104,15 @@ with tab_chat:
         for h in ss.history:
             with st.chat_message("user"):
                 st.write(h["user"])
-                if h.get("img_refs"):
-                    st.caption("첨부: " + ", ".join(h["img_refs"]))
+                refs = h.get("img_refs") or []
+                if refs:
+                    kinds = {i["ref"]: i.get("kind", "") for i in ss.state.images}
+                    thumbs = st.columns(min(len(refs), 6))
+                    for col, ref in zip(thumbs, refs):
+                        img = next((i for i in ss.images if i["ref"] == ref), None)
+                        if img:
+                            col.image(img["bytes"], caption="%s %s" % (ref, kinds.get(ref, "")),
+                                      use_container_width=True)
             with st.chat_message("assistant"):
                 st.write(h["bot"])
                 if h.get("error"):
@@ -150,10 +157,28 @@ with tab_chat:
             usage = usage or {"input": LLM.estimate_tokens(system + user),
                               "output": 0, "estimated": True}
 
+        # LLM 이 판별한 이미지 종류를 보관한다. 고객은 종류를 알려주지 않는다.
+        for meta in out.get("images") or []:
+            ref = meta.get("ref")
+            if not ref:
+                continue
+            ss.state.images = [i for i in ss.state.images if i.get("ref") != ref]
+            ss.state.images.append(meta)
+
         latency_ms = int((time.time() - t0) * 1000)
 
         diff = ss.state.apply(out, turn)
         ss.state.rematch(CAT, P, mode)
+
+        # 전화번호를 이미지에서 뽑았다면 같은 이미지를 한 번 더 읽어 대조한다.
+        # 잘못 읽혀도 형식이 유효하면 어떤 검증에도 걸리지 않기 때문이다.
+        if API_KEY and new_imgs and ss.state.phone and ss.state.phone.source == "image":
+            again = LLM.recheck_phone(API_KEY, model, new_imgs)
+            if again and again["values"]:
+                ss.state.phone_second = again["values"][0]
+                u2 = again.get("usage") or {}
+                usage["input"] = (usage.get("input") or 0) + (u2.get("input") or 0)
+                usage["output"] = (usage.get("output") or 0) + (u2.get("output") or 0)
 
         # 주소가 새로 들어왔으면 검증한다. base 만 보내고 detail 은 사람이 확인한다.
         if ss.state.address_base and not ss.state.addr_api.get("done"):
@@ -254,6 +279,10 @@ with tab_chat:
                 st.write(h["out"].get("used_refs") or "없음")
                 st.caption("주소 API")
                 st.write(ss.state.addr_api or "미호출")
+                st.caption("이미지 판별")
+                st.write(ss.state.images or "업로드 없음")
+                if ss.state.phone_second:
+                    st.caption("전화번호 2차 판독: %s" % ss.state.phone_second)
             u = h["usage"]
             st.caption("토큰 입력 %s / 출력 %s %s · 모델 %s · 지식수준 %s" % (
                 u.get("input"), u.get("output"),

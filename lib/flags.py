@@ -72,6 +72,12 @@ def evaluate(state, quote, catalog, policies, out, mode):
         if not (10 <= len(digits) <= 11):
             add("PHONE_INVALID", "'%s' → 숫자 %d자리 (10~11자리 아님)" % (state.phone.value, len(digits)))
 
+        # 형식이 유효해도 잘못 읽혔을 수 있다. 2차 판독과 대조한다.
+        second = state.phone_second
+        if second and re.sub(r"\D", "", str(second)) != digits:
+            add("PHONE_MISMATCH", "1차 '%s' vs 2차 '%s' — 이미지 판독 결과 불일치"
+                % (state.phone.value, second))
+
     if not state.address_base:
         add("ADDRESS_MISSING", "주소 자체가 없음")
     else:

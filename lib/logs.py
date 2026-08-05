@@ -129,6 +129,7 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
             "addr_road_addr": api.get("road_addr", ""),
             "addr_zipno": api.get("zipno", ""),
             "latency_ms": h.get("latency_ms", ""),
+            "images_json": _j((h.get("out") or {}).get("images")),
         }))
 
     fields = []

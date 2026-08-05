@@ -42,7 +42,8 @@ OUTPUT_CONTRACT = """\
   "handoff_request": false,
   "angry": false,
   "missing_info": [{"asked":"원산지가 어디예요?","needed":"상품별 원산지","found":false}],
-  "used_refs": {"products":["A0022"],"synonyms":["뒷다리"],"policies":["TONE"]}
+  "used_refs": {"products":["A0022"],"synonyms":["뒷다리"],"policies":["TONE"]},
+  "images": [{"ref":"img_1","kind":"product|address|payment|other","read":"이미지에서 읽은 것 요약"}]
 }
 
 규칙:
@@ -57,6 +58,19 @@ OUTPUT_CONTRACT = """\
   조립해 고객에게 전달했다. reply 에는 그 뒤에 덧붙일 말만 쓴다.
   덧붙일 말이 없으면 reply 를 빈 문자열로 둔다. 같은 내용을 반복하지 않는다.
 - DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
+
+이미지 규칙:
+- 고객은 이미지의 종류를 알려주지 않는다. 각 이미지가 무엇인지 스스로 판별해 images 에 적는다.
+    product  카탈로그 게시물 캡처 등 상품 사진
+    address  손글씨 주소, 주소 캡처, 연락처 화면
+    payment  입금 확인증 등 결제 증빙
+    other    그 밖의 것
+- product 이미지에서는 라벨코드와 인쇄된 상품명을 같은 호출에서 함께 읽어
+  label_code 와 printed_name 에 각각 넣는다. 하나만 읽히면 나머지는 null 로 둔다.
+  둘을 합쳐 하나로 만들지 않는다. 두 값이 서로를 검증하는 독립 신호이기 때문이다.
+- address 이미지에서는 수령인·전화번호·주소를 읽는다. 주소는 base 와 detail 로 나눈다.
+- 여러 장이 오면 각 결과가 어느 이미지에서 나왔는지 source_ref 에 img_1, img_2 형태로 적는다.
+- 읽히지 않는 글자를 추측해 채우지 않는다. 확신이 없으면 null 로 둔다.
 """
 
 
@@ -202,6 +216,28 @@ def call(api_key, model, system, user, images=None):
         "estimated": um is None,
     }
     return parse(text), text, usage
+
+
+PHONE_RECHECK = (
+    "이미지에서 전화번호만 다시 읽는다. 앞서 무엇을 읽었는지는 고려하지 말고 처음 보듯 읽는다. "
+    '출력은 {"phones":[{"ref":"img_1","value":"010-1234-5678"}]} 형식의 JSON 하나뿐이다. '
+    "읽히지 않으면 value 를 null 로 둔다."
+)
+
+
+def recheck_phone(api_key, model, images):
+    """전화번호는 잘못 읽혀도 형식이 유효하면 어떤 검증에도 걸리지 않는다.
+    그래서 같은 이미지를 한 번 더 읽어 결과가 다르면 PHONE_MISMATCH 를 부여한다."""
+    if not api_key or not images:
+        return None
+    try:
+        out, _, usage = call(api_key, model, PHONE_RECHECK, "전화번호를 읽어라.", images)
+    except Exception:
+        return None
+    if not out:
+        return None
+    vals = [p.get("value") for p in (out.get("phones") or []) if p.get("value")]
+    return {"values": vals, "usage": usage}
 
 
 # ------------------------------------------------------------------ 목 모드

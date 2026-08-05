@@ -90,6 +90,8 @@ class OrderState:
         self.zipno = None
         self.road_addr = None
         self.addr_api = {}       # 정제 전/후, 응답 요약. 관찰 패널이 그대로 보여준다
+        self.phone_second = None # 이미지 전화번호 2차 판독값. 1차와 다르면 PHONE_MISMATCH
+        self.images = []         # [{ref, kind, read}] LLM 이 판별한 이미지 종류
 
     # ---------------------------------------------------------------- 누적
     def apply(self, out, turn):
