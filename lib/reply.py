@@ -92,7 +92,10 @@ def build(state, quote, catalog, policies, history):
         out.append("안녕하세요 고객님!")
 
     for r in quote["rows"]:
-        out.append("%s %d개 %s" % (r["매칭"], r["수량"], won(r["소계"])))
+        # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
+        pack = (r.get("포장단위") or "").strip()
+        name = "%s %s" % (r["매칭"], pack) if pack else r["매칭"]
+        out.append("%s %d개 %s" % (name, r["수량"], won(r["소계"])))
 
     threshold = policies.get_int("FREE_SHIPPING_THRESHOLD", 0)
     if quote["shipping"]:

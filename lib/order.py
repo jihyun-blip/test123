@@ -200,6 +200,7 @@ class OrderState:
                 subtotal += amount
             rows.append({
                 "표현": line.key,
+                "포장단위": (catalog.items.get(code, {}).get("pack_unit", "") if code else ""),
                 "매칭": catalog.display(code) if code else (line.match.status if line.match else "-"),
                 "수량": line.quantity,
                 "단가": unit,

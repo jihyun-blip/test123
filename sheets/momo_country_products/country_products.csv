@@ -1,7 +1,7 @@
-﻿country_code,item_code,display_name,price,currency,is_active,note
-KR,A0013,돼지꼬리,4000,KRW,Y,
-KR,B0023,삼겹살,10000,KRW,Y,
-KR,A0022,후지,5000,KRW,Y,
-KR,A0031,후지슬라이스,7000,KRW,Y,
-KR,A0024,전지,8000,KRW,Y,
-KR,A0026,소꼬리,24000,KRW,Y,
+﻿country_code,item_code,display_name,pack_unit,price,currency,is_active,note
+KR,A0013,돼지꼬리,1kg,4000,KRW,Y,
+KR,B0023,삼겹살,1kg,10000,KRW,Y,
+KR,A0022,후지,1kg,5000,KRW,Y,
+KR,A0031,후지슬라이스,1kg,7000,KRW,Y,
+KR,A0024,전지,1kg,8000,KRW,Y,
+KR,A0026,소꼬리,1kg,24000,KRW,Y,
