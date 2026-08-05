@@ -231,8 +231,8 @@ def mock(text, catalog, turn):
         for expr in list(catalog.by_synonym) + list(catalog.by_canonical):
             if expr and expr in t:
                 out["item_ops"].append({
-                    "op": "add", "raw_text": expr, "name_hint": expr, "quantity": 1,
-                    "unit_expr": "개", "source": "text", "source_ref": "turn_%d" % turn})
+                    "op": "add", "raw_text": expr, "name_hint": expr, "quantity": None,
+                    "unit_expr": None, "source": "text", "source_ref": "turn_%d" % turn})
                 break
 
     p = _PHONE.search(t)
