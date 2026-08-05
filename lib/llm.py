@@ -24,6 +24,9 @@ PRICING = {
 }
 DEFAULT_PRICE = (0.15, 1.25)
 
+# 모델별로 사고 끄기 인자를 받는지 한 번만 확인하고 기억한다.
+_NO_THINKING = {}
+
 OUTPUT_CONTRACT = """\
 반드시 아래 JSON 하나만 출력한다. 설명 문장을 덧붙이지 않는다.
 
@@ -61,6 +64,10 @@ OUTPUT_CONTRACT = """\
   아직 확정되지 않은 상태이므로 모순된 안내가 된다.
 - 한 번에 한 가지만 묻는다. 어느 상품인지 되묻는 중에 성함·연락처·주소를 함께 묻지 않는다.
   고객이 무엇에 답해야 할지 모르게 된다.
+- 직전 턴에 챗봇이 무언가를 물었다면, 고객의 짧은 답은 그 질문에 대한 값이다.
+  "성함을 알려주세요" 뒤의 "모모" 는 receiver 값이고, "몇 개 필요하신가요" 뒤의 "3" 은 수량이다.
+  단답이라고 해서 흘려보내지 않는다.
+- 입금증을 먼저 요구하지 않는다. 고객이 보내오면 받았다고만 하고, 요청하는 말은 하지 않는다.
 - DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
 
 이미지 규칙:
@@ -151,8 +158,6 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
             want.append("아직 못 받은 필수 정보: " + ", ".join(pending["missing"]))
         if pending.get("detail"):
             want.append("상세주소(동·호)가 없음 — 요청 수준: %s" % pending.get("detail_rule", "권장"))
-        if pending.get("proof"):
-            want.append("입금증을 아직 못 받음")
         if want:
             parts.append(
                 "[아직 채우지 못한 것 — 이번 답변에서 자연스럽게 물어본다]\n  "
@@ -242,18 +247,31 @@ def call(api_key, model, system, user, images=None):
 
     # 이 작업은 추론이 아니라 추출이다. 사고 단계를 끄면 응답이 빨라지고,
     # 사고 파트가 섞여 JSON 파싱이 깨지는 일도 줄어든다.
-    # 모델이 지원하지 않으면 인자 없이 다시 부른다.
-    try:
-        resp = client.models.generate_content(
-            model=model, contents=contents,
-            config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0), **cfg),
-        )
-    except Exception:
-        resp = client.models.generate_content(
-            model=model, contents=contents,
-            config=types.GenerateContentConfig(**cfg),
-        )
+    if _NO_THINKING.get(model, True):
+        try:
+            resp = client.models.generate_content(
+                model=model, contents=contents,
+                config=types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(thinking_budget=0), **cfg),
+            )
+            return _unpack(resp, system, user)
+        except Exception as e:
+            # 모델이 이 인자를 안 받는 경우에만 한 번 더 부른다.
+            # 다른 이유의 실패까지 재시도하면 한 턴에 API 를 두 번 태워 응답이 두 배로 느려진다.
+            msg = str(e).lower()
+            if not any(k in msg for k in ("thinking", "not supported", "unknown field",
+                                          "invalid_argument", "unsupported")):
+                raise
+            _NO_THINKING[model] = False   # 이 모델은 앞으로 시도하지 않는다
+
+    resp = client.models.generate_content(
+        model=model, contents=contents,
+        config=types.GenerateContentConfig(**cfg),
+    )
+    return _unpack(resp, system, user)
+
+
+def _unpack(resp, system, user):
 
     # resp.text 는 파트가 여러 개이거나 사고(thinking) 파트가 섞이면 비어 오기도 한다.
     # 비면 후보의 파트를 직접 훑어 텍스트를 모은다.

@@ -114,7 +114,8 @@ with tab_chat:
                             col.image(img["bytes"], caption="%s %s" % (ref, kinds.get(ref, "")),
                                       use_container_width=True)
             with st.chat_message("assistant"):
-                st.write(h["bot"])
+                # 마크다운은 단일 개행을 무시한다. 거래명세서가 한 줄로 붙지 않게 한다.
+                st.markdown(h["bot"].replace("\n", "  \n"))
                 if h.get("latency_ms"):
                     st.caption("%.1f초" % (h["latency_ms"] / 1000))
                 if h.get("error"):
@@ -202,7 +203,7 @@ with tab_chat:
         # 코드가 품목을 되묻는 중이면 LLM 의 덧붙임을 버린다.
         # 한 턴에 질문이 둘이면 고객이 무엇에 답해야 할지 모르고,
         # 확정되지도 않았는데 "담아드렸어요" 같은 말이 섞인다.
-        if kind in RP.ASK_STAGES:
+        if kind in RP.ASK_STAGES or (kind_before in RP.ASK_STAGES and kind != kind_before):
             tail = ""
 
         # 무엇이 비었는지는 코드가 알고, 묻는 문장은 LLM 이 만든다.

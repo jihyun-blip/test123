@@ -159,7 +159,7 @@ def _body(state, quote, catalog, policies):
         out.append("입금증 받았습니다.")
 
     pend = pending(state, policies)
-    if not (pend["missing"] or pend["detail"] or pend["proof"]):
+    if not (pend["missing"] or pend["detail"]):
         out.append("주문해주셔서 감사합니다. 확인 후 빠르게 발송해드릴게요.")
         return ("\n\n".join(out), "complete")
 
@@ -173,11 +173,8 @@ def pending(state, policies):
     detail_rule = str(policies.get("ASK_ADDRESS_DETAIL", "권장") or "권장").strip()
     want_detail = (not state.address_detail) and detail_rule != "생략" and bool(state.address_base)
 
-    want_proof = (not state.payment_proof) and not missing \
-        and str(policies.get("REQUEST_PAYMENT_PROOF", "Y")).upper() == "Y"
-
-    return {"missing": missing, "detail": want_detail, "detail_rule": detail_rule,
-            "proof": want_proof}
+    # 입금증은 먼저 요구하지 않는다. 고객이 보내면 받아서 검수에 올릴 뿐이다.
+    return {"missing": missing, "detail": want_detail, "detail_rule": detail_rule}
 
 
 def fallback_ask(pend):
@@ -189,8 +186,6 @@ def fallback_ask(pend):
         return ask
     if pend["detail"]:
         return "동·호수까지 알려주시면 더 정확하게 배송해드릴 수 있어요."
-    if pend["proof"]:
-        return "입금하신 뒤 입금증을 보내주시면 더 빠르게 처리해드릴 수 있어요."
     return ""
 
 
