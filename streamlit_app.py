@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from lib import flags as FL
+from lib import images as IMG
 from lib import juso
 from lib import logs as LOG
 from lib import llm as LLM
@@ -24,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.16"
+APP_VERSION = "2026-08-05.17"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -154,8 +155,9 @@ with tab_chat:
         new_imgs = []
         for f in up or []:
             ref = "img_%d" % (len(ss.images) + len(new_imgs) + 1)
-            new_imgs.append({"ref": ref, "name": f.name,
-                             "bytes": f.getvalue(), "mime": f.type or "image/jpeg"})
+            data, mime, note = IMG.prepare(f.getvalue(), f.type or "image/jpeg")
+            new_imgs.append({"ref": ref, "name": f.name, "bytes": data,
+                             "mime": mime, "resize": note})
         ss.pending = {"user": prompt, "imgs": new_imgs}
         st.rerun()
 
@@ -300,6 +302,7 @@ with tab_chat:
 
         ss.history.append({
             "turn": turn, "user": prompt, "bot": bot, "fixed": fixed, "kind": kind,
+            "img_resize": [i["resize"] for i in new_imgs if i.get("resize")],
             "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw, "error": err,
             "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
             "at": now(), "latency_ms": latency_ms, "addr_api": dict(ss.state.addr_api or {}),
