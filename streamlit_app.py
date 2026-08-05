@@ -46,6 +46,7 @@ def init():
     ss.setdefault("started_at", now())
     ss.setdefault("log_msgs", [])
     ss.setdefault("pending", None)   # 화면에 먼저 띄우고 나서 처리할 발화
+    ss.setdefault("saved", None)     # 방금 저장한 대화 id
 
 
 def now():
@@ -383,6 +384,16 @@ with tab_verdict:
 
         note = st.text_area("관찰 메모", placeholder="무엇이 부족했는지, 어떤 지침이 필요한지")
 
+        if ss.saved:
+            st.success("판정을 저장했습니다 — %s" % ss.saved)
+            for kind_, msg in ss.log_msgs:
+                (st.caption if kind_ == "ok" else st.warning)(msg)
+            if st.button("새 대화 시작", type="primary"):
+                ss.saved = None
+                reset_conversation()
+                st.rerun()
+            st.stop()
+
         if st.button("판정 저장", type="primary"):
             sources = {
                 "invoice": "image" if any(l.source == "image" for l in state.lines) else "text",
@@ -416,22 +427,26 @@ with tab_verdict:
             # 시트에도 남긴다. 실패해도 앱을 멈추지 않고 세션 기록은 그대로 유지된다.
             msgs = []
             if LOG.configured():
-                bundle = LOG.build_rows(
-                    conv_id, tester, mode_label, model, state, quote, ss.history,
-                    verdicts, sources, note,
-                    policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
-                    started_at=ss.started_at, ended_at=now(),
-                    flag_settings={k: r.get("값") for k, r in P.flags.items()})
-                for tab, rows in bundle.items():
-                    ok, msg = LOG.write(tab, rows)
-                    msgs.append(("ok" if ok else "err", "%s — %s" % (tab, msg)))
-                LOG.clear_cache()
+                try:
+                    bundle = LOG.build_rows(
+                        conv_id, tester, mode_label, model, state, quote, ss.history,
+                        verdicts, sources, note,
+                        policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
+                        started_at=ss.started_at, ended_at=now(),
+                        flag_settings={k: r.get("값") for k, r in P.flags.items()})
+                    for tab, rows in bundle.items():
+                        ok, msg = LOG.write(tab, rows)
+                        msgs.append(("ok" if ok else "err", "%s — %s" % (tab, msg)))
+                    LOG.clear_cache()
+                except Exception as e:
+                    # 시트 기록이 실패해도 세션 기록은 남는다. 조용히 넘어가지 않는다.
+                    msgs.append(("err", "로그 기록 실패 — %s: %s" % (type(e).__name__, e)))
             else:
                 msgs.append(("err", "로그 미설정 — 이 세션 안에서만 집계됩니다"))
             ss.log_msgs = msgs
 
             ss.conv_no += 1
-            reset_conversation()
+            ss.saved = conv_id
             st.rerun()
 
 
@@ -481,8 +496,11 @@ with tab_report:
 
     if LOG.configured():
         recs, log_err = records_from_sheet()
-        if log_err:
-            st.warning("로그 시트를 읽지 못해 이 세션 기록만 보여줍니다 — %s" % log_err)
+        if log_err or (not recs and ss.records):
+            if log_err:
+                st.warning("로그 시트를 읽지 못해 이 세션 기록만 보여줍니다 — %s" % log_err)
+            else:
+                st.warning("시트에 기록은 됐지만 아직 읽히지 않습니다. 이 세션 기록으로 보여줍니다.")
             recs = ss.records
         else:
             st.caption("로그 시트에서 읽었습니다. 두 테스터의 기록이 함께 집계됩니다.")

@@ -60,6 +60,12 @@ def _fetch(url, token, tab):
     data = r.json()
     if not data.get("ok"):
         raise RuntimeError(data.get("error"))
+    if "rows" not in data:
+        # 예전 배포는 doGet 에 tab 인자가 없어 탭 목록만 돌려준다.
+        # 쓰기는 되는데 읽기만 안 되는 상태라 원인을 짚어주지 않으면 찾기 어렵다.
+        raise RuntimeError(
+            "Apps Script 가 읽기를 지원하지 않는 예전 버전입니다. "
+            "tools/apps_script_doPost.gs 를 다시 붙여넣고 새 버전으로 배포해주세요.")
     return pd.DataFrame(data.get("rows") or [])
 
 
