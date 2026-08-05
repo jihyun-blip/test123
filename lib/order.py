@@ -110,12 +110,22 @@ class OrderState:
         self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     # ---------------------------------------------------------------- 누적
-    def apply(self, out, turn, catalog=None, policies=None, each_hint=False):
+    def apply(self, out, turn, catalog=None, policies=None, each_hint=False, user_text=""):
         """LLM 출력 한 턴치를 누적 상태에 반영한다. 반환값은 변화 요약."""
         before = self.snapshot()
 
         for op in out.get("item_ops") or []:
             self._apply_op(op, turn, catalog, policies, each_hint)
+
+        # "각각 몇 개씩" 이라고 물었는데 고객이 "1개요" 라고만 답한 경우.
+        # LLM 은 이걸 한 품목의 update 로만 보내는 일이 잦아, 나머지 줄이 계속 빈 채로 남는다.
+        # 고객이 실제로 친 문장을 직접 보고 남은 줄을 채운다. LLM 출력 모양에 기대지 않는다.
+        if each_hint:
+            m = _QTY_ONLY.match(str(user_text or "").strip())
+            if m:
+                qty = float(m.group(1))
+                qty = int(qty) if qty == int(qty) else qty
+                self._fill_quantities(qty, m.group(2) or "", True)
 
         self.receiver.apply(out.get("receiver"), turn)
         self.phone.apply(out.get("phone"), turn)
