@@ -57,6 +57,8 @@ OUTPUT_CONTRACT = """\
 - reply 에 금액·품목 목록·계좌번호를 쓰지 않는다. 거래명세서와 되물음 문장은 코드가 이미
   조립해 고객에게 전달했다. reply 에는 그 뒤에 덧붙일 말만 쓴다.
   덧붙일 말이 없으면 reply 를 빈 문자열로 둔다. 같은 내용을 반복하지 않는다.
+- 코드가 되묻고 있는 중이면 "담아드렸어요", "주문이 완료되었어요" 처럼 끝난 것으로 말하지 않는다.
+  아직 확정되지 않은 상태이므로 모순된 안내가 된다.
 - DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
 
 이미지 규칙:
@@ -198,22 +200,51 @@ def call(api_key, model, system, user, images=None):
         contents.append(types.Part.from_bytes(data=img["bytes"], mime_type=img["mime"]))
     contents.append(user)
 
-    resp = client.models.generate_content(
-        model=model,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            temperature=0.2,
-        ),
-    )
+    cfg = {
+        "system_instruction": system,
+        "response_mime_type": "application/json",
+        "temperature": 0.2,
+    }
 
-    text = resp.text or ""
+    # 이 작업은 추론이 아니라 추출이다. 사고 단계를 끄면 응답이 빨라지고,
+    # 사고 파트가 섞여 JSON 파싱이 깨지는 일도 줄어든다.
+    # 모델이 지원하지 않으면 인자 없이 다시 부른다.
+    try:
+        resp = client.models.generate_content(
+            model=model, contents=contents,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0), **cfg),
+        )
+    except Exception:
+        resp = client.models.generate_content(
+            model=model, contents=contents,
+            config=types.GenerateContentConfig(**cfg),
+        )
+
+    # resp.text 는 파트가 여러 개이거나 사고(thinking) 파트가 섞이면 비어 오기도 한다.
+    # 비면 후보의 파트를 직접 훑어 텍스트를 모은다.
+    text = ""
+    try:
+        text = resp.text or ""
+    except Exception:
+        pass
+    if not text:
+        for c in (getattr(resp, "candidates", None) or []):
+            for part in (getattr(getattr(c, "content", None), "parts", None) or []):
+                if getattr(part, "text", None):
+                    text += part.text
+
+    finish = ""
+    for c in (getattr(resp, "candidates", None) or []):
+        finish = str(getattr(c, "finish_reason", "") or "")
+        break
+
     um = getattr(resp, "usage_metadata", None)
     usage = {
         "input": getattr(um, "prompt_token_count", None) or estimate_tokens(system + user),
         "output": getattr(um, "candidates_token_count", None) or estimate_tokens(text),
         "estimated": um is None,
+        "finish_reason": finish,
     }
     return parse(text), text, usage
 

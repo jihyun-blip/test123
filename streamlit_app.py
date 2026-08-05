@@ -115,8 +115,13 @@ with tab_chat:
                                       use_container_width=True)
             with st.chat_message("assistant"):
                 st.write(h["bot"])
+                if h.get("latency_ms"):
+                    st.caption("%.1f초" % (h["latency_ms"] / 1000))
                 if h.get("error"):
                     st.error("LLM 미사용 · 목 모드로 대체됨 — %s" % h["error"])
+                    if h.get("raw"):
+                        with st.expander("모델이 실제로 돌려준 원문"):
+                            st.code(h["raw"][:3000])
 
         up, prompt = None, None
         if not ss.ended:
@@ -146,7 +151,8 @@ with tab_chat:
             try:
                 out, raw, usage = LLM.call(API_KEY, model, system, user, new_imgs)
                 if out is None:
-                    err = "응답을 JSON 으로 읽지 못했습니다"
+                    err = "응답을 JSON 으로 읽지 못했습니다 (finish_reason=%s, %d자)" % (
+                        usage.get("finish_reason", "?"), len(raw or ""))
             except Exception as e:
                 err = "%s: %s" % (type(e).__name__, e)
         else:
