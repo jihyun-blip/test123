@@ -24,7 +24,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.10"
+APP_VERSION = "2026-08-05.11"
 
 TESTERS = ["이지현", "김경민"]
 
@@ -203,9 +203,17 @@ with tab_chat:
 
         # 그래도 상품을 하나도 못 건졌는데 상품 사진이 왔다면, 라벨만 따로 읽어본다.
         # 1차 응답의 구조에 기대지 않는 마지막 경로다.
-        if new_imgs and not any(
-                (o.get("label_code") or o.get("name_hint") or o.get("raw_text"))
-                for o in (out.get("item_ops") or [])):
+        def _points_to_product(o):
+            """이 항목이 실제 상품을 가리키는가. 고객 발화를 상품명으로 잘못 넣은 경우도 걸러낸다."""
+            for v in (o.get("label_code"), o.get("name_hint"), o.get("raw_text")):
+                if not v:
+                    continue
+                if M.match({"name_hint": v, "label_code": o.get("label_code")},
+                           CAT, P, "full").status != M.NOT_FOUND:
+                    return True
+            return False
+
+        if new_imgs and not any(_points_to_product(o) for o in (out.get("item_ops") or [])):
             extra = []
             for it in LLM.read_labels(API_KEY, model, new_imgs):
                 code = LLM._code_of(it.get("label_code") or it.get("printed_name"), CAT)

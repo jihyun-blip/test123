@@ -83,7 +83,7 @@ RESPONSE_SCHEMA = {
         "images": {"type": "array", "items": {"type": "object", "properties": {
             "ref": _NULLABLE_STR, "kind": _NULLABLE_STR, "read": _NULLABLE_STR}}},
     },
-    "required": ["reply", "item_ops", "intent"],
+    "required": ["reply", "item_ops", "intent", "images"],
 }
 
 OUTPUT_CONTRACT = """\
@@ -362,7 +362,8 @@ def read_labels(api_key, model, images):
     if not api_key or not images:
         return []
     try:
-        out, _, _ = call(api_key, model, LABEL_READ, "라벨코드를 읽어라.", images, attempts=1)
+        out, _, _ = call(api_key, model, LABEL_READ, "라벨코드를 읽어라.", images,
+                         attempts=1, schema=None)
     except Exception:
         return []
     return (out or {}).get("items") or []
@@ -430,7 +431,7 @@ RETRYABLE = ("503", "429", "unavailable", "high demand", "overloaded",
              "resource_exhausted", "deadline")
 
 
-def call(api_key, model, system, user, images=None, attempts=3):
+def call(api_key, model, system, user, images=None, attempts=3, schema="main"):
     """반환값은 (출력 dict, 원본 텍스트, 사용량 dict).
 
     503 UNAVAILABLE 은 모델 쪽 일시 과부하라 잠시 뒤 다시 부르면 대개 통과한다.
@@ -440,7 +441,7 @@ def call(api_key, model, system, user, images=None, attempts=3):
     last = None
     for i in range(attempts):
         try:
-            return _call_once(api_key, model, system, user, images)
+            return _call_once(api_key, model, system, user, images, schema)
         except Exception as e:
             last = e
             msg = str(e).lower()
@@ -450,7 +451,7 @@ def call(api_key, model, system, user, images=None, attempts=3):
     raise last
 
 
-def _call_once(api_key, model, system, user, images=None):
+def _call_once(api_key, model, system, user, images=None, schema="main"):
     if not api_key:
         return None, "", {}
 
@@ -473,7 +474,7 @@ def _call_once(api_key, model, system, user, images=None):
     }
 
     # 스키마를 붙이면 모델이 구조를 어길 수 없다. 받지 않는 모델이면 한 번만 확인하고 뺀다.
-    if _USE_SCHEMA.get(model, True):
+    if schema == "main" and _USE_SCHEMA.get(model, True):
         try:
             return _generate(client, types, model, contents,
                              dict(cfg, response_schema=RESPONSE_SCHEMA), system, user)
@@ -558,7 +559,8 @@ def recheck_phone(api_key, model, images):
     if not api_key or not images:
         return None
     try:
-        out, _, usage = call(api_key, model, PHONE_RECHECK, "전화번호를 읽어라.", images)
+        out, _, usage = call(api_key, model, PHONE_RECHECK, "전화번호를 읽어라.", images,
+                             schema=None)
     except Exception:
         return None
     if not out:
