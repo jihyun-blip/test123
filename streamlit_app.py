@@ -24,7 +24,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.12"
+APP_VERSION = "2026-08-05.13"
 
 TESTERS = ["이지현", "김경민"]
 
@@ -236,7 +236,9 @@ with tab_chat:
 
         latency_ms = int((time.time() - t0) * 1000)
 
-        diff = ss.state.apply(out, turn, CAT, P)
+        # 직전에 "각각 몇 개씩" 이라고 물었으면 숫자 하나만 와도 각 품목에 적용한다
+        each_hint = bool(ss.history and "각각 몇 개씩" in (ss.history[-1]["bot"] or ""))
+        diff = ss.state.apply(out, turn, CAT, P, each_hint)
         ss.state.rematch(CAT, P, mode)
 
         # 전화번호를 이미지에서 뽑았다면 같은 이미지를 한 번 더 읽어 대조한다.

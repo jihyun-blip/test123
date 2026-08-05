@@ -17,9 +17,13 @@ from . import matching as M
 from . import units as U
 
 
-# '1개씩', '2', '3kg' 처럼 수량만 있는 발화. 상품명으로 오인하면 없는 품목을 되묻게 된다.
+# '1개씩', '2', '3kg', '1개요', '1개씩이요' 처럼 수량만 있는 발화.
+# 상품명으로 오인하면 없는 품목을 되묻게 된다.
+# 말끝의 '요/이요/입니다' 같은 군더더기까지 받아줘야 실제 대화에서 걸린다.
 _QTY_ONLY = re.compile(
-    r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(개|kg|g|키로|킬로|그램|근|박스|팩|봉|봉지|마리|줄|세트|통)?\s*(씩)?\s*$")
+    r"^\s*([0-9]+(?:\.[0-9]+)?)\s*"
+    r"(개|kg|g|키로|킬로|그램|근|박스|팩|봉|봉지|마리|줄|세트|통)?\s*"
+    r"(씩)?\s*(?:이?요|입니다|이에요|예요|이요)?\s*[.!~]*\s*$")
 
 
 class Field:
@@ -106,12 +110,12 @@ class OrderState:
         self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     # ---------------------------------------------------------------- 누적
-    def apply(self, out, turn, catalog=None, policies=None):
+    def apply(self, out, turn, catalog=None, policies=None, each_hint=False):
         """LLM 출력 한 턴치를 누적 상태에 반영한다. 반환값은 변화 요약."""
         before = self.snapshot()
 
         for op in out.get("item_ops") or []:
-            self._apply_op(op, turn, catalog, policies)
+            self._apply_op(op, turn, catalog, policies, each_hint)
 
         self.receiver.apply(out.get("receiver"), turn)
         self.phone.apply(out.get("phone"), turn)
@@ -152,14 +156,16 @@ class OrderState:
                 return l
         return None
 
-    def _fill_quantities(self, qty, unit, each):
+    def _fill_quantities(self, qty, unit, each, each_hint=False):
         """수량 표현만 온 경우 비어 있는 줄에 채운다. 반환값은 처리했는지 여부.
 
-        '1개씩' 같은 답을 상품명으로 잡으면 없는 품목을 되묻는 무한 루프가 된다."""
+        '1개씩' 같은 답을 상품명으로 잡으면 없는 품목을 되묻는 무한 루프가 된다.
+        each_hint 는 직전에 "각각 몇 개씩" 이라고 물었다는 뜻이다.
+        그 질문에 "1개요" 라고 답했으면 각 품목에 1개로 보는 것이 자연스럽다."""
         blanks = [l for l in self.lines if l.quantity is None]
         if not blanks:
             return False
-        targets = blanks if (each or len(blanks) == 1) else []
+        targets = blanks if (each or each_hint or len(blanks) == 1) else []
         if not targets:
             # 여러 줄이 비었는데 '씩' 도 없으면 어느 쪽인지 알 수 없다. 되물어야 한다.
             return True
@@ -169,7 +175,7 @@ class OrderState:
                 l.unit_expr = unit
         return True
 
-    def _apply_op(self, op, turn, catalog=None, policies=None):
+    def _apply_op(self, op, turn, catalog=None, policies=None, each_hint=False):
         act = (op.get("op") or "add").lower()
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
         label = (op.get("label_code") or "").strip()
@@ -189,7 +195,7 @@ class OrderState:
             qty = float(m.group(1))
             qty = int(qty) if qty == int(qty) else qty
             if self._fill_quantities(qty, m.group(2) or op.get("unit_expr") or "",
-                                     bool(m.group(3))):
+                                     bool(m.group(3)), each_hint):
                 return
 
         if act == "remove":
