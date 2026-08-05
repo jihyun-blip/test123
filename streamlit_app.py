@@ -193,6 +193,9 @@ with tab_chat:
             usage = usage or {"input": LLM.estimate_tokens(system + user),
                               "output": 0, "estimated": True}
 
+        # 사진에서 읽은 라벨코드가 item_ops 에 빠져 있으면 코드가 살려낸다
+        out = LLM.recover_from_images(out, CAT)
+
         # LLM 이 판별한 이미지 종류를 보관한다. 고객은 종류를 알려주지 않는다.
         for meta in out.get("images") or []:
             ref = meta.get("ref")

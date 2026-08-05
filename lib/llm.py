@@ -147,6 +147,10 @@ OUTPUT_CONTRACT = """\
   label_code 와 printed_name 에 각각 넣는다. 하나만 읽히면 나머지는 null 로 둔다.
   둘을 합쳐 하나로 만들지 않는다. 두 값이 서로를 검증하는 독립 신호이기 때문이다.
 - address 이미지에서는 수령인·전화번호·주소를 읽는다. 주소는 base 와 detail 로 나눈다.
+- 사진에서 라벨코드나 상품명을 읽었으면 images 의 read 에만 적지 말고
+  반드시 item_ops 에도 항목을 만들어 label_code / printed_name 에 넣는다.
+  읽어놓고 item_ops 를 비워두면 고객에게 무엇인지 다시 묻게 된다.
+- 무엇을 가리키는지 알 수 없는 빈 항목을 item_ops 에 넣지 않는다.
 - 여러 장이 오면 각 결과가 어느 이미지에서 나왔는지 source_ref 에 img_1, img_2 형태로 적는다.
 - 읽히지 않는 글자를 추측해 채우지 않는다. 확신이 없으면 null 로 둔다.
 - 상품이 둘 이상인데 수량 표현이 하나뿐이면, 그것이 어느 상품의 수량인지 단정하지 않는다.
@@ -290,6 +294,56 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
 
     parts.append("[고객 발화]\n" + str(text or ""))
     return "\n\n".join(parts)
+
+
+def _code_of(text, catalog):
+    """이미지에서 읽어낸 문자열이 실제 상품을 가리키면 그 코드를 돌려준다."""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    for token in re.findall(r"[A-Za-z]\d{3,}", t):
+        if token.upper() in catalog.label_codes():
+            return token.upper()
+    for codes in (catalog.by_canonical.get(t), catalog.by_synonym.get(t)):
+        if codes and len(set(codes)) == 1:
+            return codes[0]
+    return None
+
+
+def recover_from_images(out, catalog):
+    """이미지 판별에는 라벨코드를 적어놓고 item_ops 에는 빈 항목만 넣는 일이 있다.
+
+    읽어낸 값이 실제 상품을 가리키면 품목으로 살린다. 모델이 이미 읽은 것을
+    버리고 고객에게 되묻는 것은 낭비이고, 실체 없는 되물음이 나간다."""
+    ops = list(out.get("item_ops") or [])
+
+    known = set()
+    for o in ops:
+        for v in (o.get("label_code"), o.get("name_hint"), o.get("raw_text")):
+            c = _code_of(v, catalog)
+            if c:
+                known.add(c)
+
+    added = []
+    for meta in out.get("images") or []:
+        if meta.get("kind") != "product":
+            continue
+        code = _code_of(meta.get("read"), catalog)
+        if not code or code in known:
+            continue
+        known.add(code)
+        added.append({
+            "op": "add", "name_hint": catalog.display(code), "label_code": code,
+            "quantity": None, "unit_expr": None,
+            "source": "image", "source_ref": meta.get("ref"),
+        })
+
+    if added:
+        # 무엇을 가리키는지 없는 빈 항목은 버린다
+        ops = [o for o in ops
+               if (o.get("name_hint") or o.get("raw_text") or o.get("label_code"))]
+        out["item_ops"] = ops + added
+    return out
 
 
 def repair(s):

@@ -172,6 +172,12 @@ class OrderState:
     def _apply_op(self, op, turn, catalog=None, policies=None):
         act = (op.get("op") or "add").lower()
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
+        label = (op.get("label_code") or "").strip()
+
+        # 무엇을 가리키는지 전혀 없는 항목은 버린다. 빈 줄을 만들면
+        # "'말씀하신 상품'이 어떤 상품인지…" 처럼 실체 없는 되물음이 나간다.
+        if act == "add" and not hint and not label:
+            return
 
         # 수량 표현만 있는 발화는 상품명이 아니다
         m = _QTY_ONLY.match(hint)
