@@ -2,124 +2,417 @@
 """
 기능 B 챗봇 테스트 도구
 
-구현 순서 1~2번: 구글 시트 로더 + 지침 DB 파서.
-API 키가 없어도 화면이 뜨고 조작이 가능한 목 모드로 동작한다.
+이 도구의 산출물은 점수가 아니라 "이 컬럼이 필요하다", "이 지침이 필요하다"는 목록이다.
+화면은 보고서 / 대화 / 판정 / 데이터 네 탭으로 나뉜다.
 """
 import pandas as pd
 import streamlit as st
 
+from lib import flags as FL
+from lib import juso
+from lib import llm as LLM
+from lib import matching as M
 from lib import policies as pol
 from lib import sheets
+from lib.order import OrderState
 
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 TESTERS = ["이지현", "김경민"]
 
+# 테스터가 대화 끝에 통과·실패를 찍는 항목. 이게 이 도구의 핵심 산출물이다.
+VERDICT_FIELDS = [
+    ("invoice", "거래명세서 (품목·수량·가격)"),
+    ("address", "주소"),
+    ("receiver", "수령자명"),
+    ("phone", "전화번호"),
+]
+CAUSE_TAGS = ["추출오류", "매칭오류", "단위오해", "DB에없음", "지침부족", "기타"]
+
+
+def init():
+    ss = st.session_state
+    ss.setdefault("state", OrderState())
+    ss.setdefault("history", [])      # [{turn, user, bot, out, diff, flags, detect, usage, model}]
+    ss.setdefault("images", [])       # 누적 업로드 이미지
+    ss.setdefault("ended", False)
+    ss.setdefault("records", [])      # 종료된 대화들의 판정 기록
+    ss.setdefault("conv_no", 1)
+
+
+def reset_conversation():
+    ss = st.session_state
+    ss.state = OrderState()
+    ss.history = []
+    ss.images = []
+    ss.ended = False
+
+
+init()
+ss = st.session_state
+
 # ------------------------------------------------------------------ 상단
-head = st.columns([2, 2, 2, 1.2])
+head = st.columns([1.6, 1.6, 2, 1.1, 1.1])
 tester = head[0].selectbox("테스터", TESTERS)
-mode = head[1].radio("지식 수준", ["전체", "축소"], horizontal=True,
-                     help="축소 모드는 외부 개발사가 실제로 갖게 될 수준을 재현합니다")
+mode_label = head[1].radio("지식 수준", ["전체", "축소"], horizontal=True,
+                           help="축소 모드는 외부 개발사가 실제로 갖게 될 수준을 재현합니다")
+mode = "full" if mode_label == "전체" else "reduced"
 model = head[2].selectbox("모델", sheets.secret("MODELS", ["(목 모드)"]))
 if head[3].button("DB 새로고침", use_container_width=True):
     sheets.clear_cache()
     st.rerun()
-
-if sheets.is_mock():
-    st.info("**목 모드** — 시트 ID가 설정되지 않아 로컬 CSV를 읽고 있습니다. "
-            "Streamlit Secrets에 `SHEET_ID_MASTER`, `SHEET_ID_COUNTRY`, `SHEET_ID_POLICY`를 넣으면 시트를 직접 읽습니다.")
+if head[4].button("대화 초기화", use_container_width=True):
+    reset_conversation()
+    st.rerun()
 
 data, origins, errors = sheets.load_all()
-
-# 최소 컬럼이 없으면 여기서 멈춘다. 무엇이 없는지 알리고 진행하지 않는다.
 if errors:
     for name, err in errors.items():
         st.error("**%s** 를 읽지 못했습니다\n\n```\n%s\n```" % (name, err))
     st.stop()
 
-st.divider()
-
-# ------------------------------------------------------------------ 로드 상태
-st.subheader("데이터 로드 상태")
-cols = st.columns(len(data))
-for col, (name, df) in zip(cols, data.items()):
-    col.metric(name, "%d행" % len(df), origins[name])
-    col.caption("컬럼: " + ", ".join(df.columns))
-
-st.caption("컬럼은 하드코딩되어 있지 않습니다. 시트에 컬럼을 추가하고 **DB 새로고침**을 누르면 "
-           "다음 대화부터 그 정보가 챗봇에게 전달됩니다.")
-
-# ------------------------------------------------------------------ 지침
-st.divider()
-st.subheader("지침 DB")
-
 P = pol.Policies(data["bot_policies"])
+CAT = M.Catalog(data["master_products"], data["country_products"], data["synonyms"])
 
-for w in P.validate():
-    st.warning(w)
+API_KEY = sheets.secret("GEMINI_API_KEY")
+JUSO_KEY = sheets.secret("JUSO_CONFM_KEY")
 
-left, right = st.columns([3, 2])
+tab_report, tab_chat, tab_verdict, tab_data = st.tabs(
+    ["📊 보고서", "💬 대화", "✅ 판정", "🗄 데이터"])
 
-with left:
-    st.dataframe(P.summary(), use_container_width=True, hide_index=True, height=420)
-    st.caption("**소비처** — 코드가 읽는 항목은 흐름과 계산을 바꾸고, 프롬프트 항목은 말투와 태도를 바꿉니다. "
-               "**잠금** 행(배송정책·결제정보)은 실험 변수가 아니라 고정값이라 편집할 수 없습니다.")
 
-with right:
-    st.markdown("**견적 계산에 쓰이는 값**")
-    st.write({
-        "무료배송 기준": f"{P.get_int('FREE_SHIPPING_THRESHOLD'):,}원" if P.get("FREE_SHIPPING_THRESHOLD") else "미설정",
-        "기본 배송비": f"{P.get_int('SHIPPING_FEE'):,}원" if P.get("SHIPPING_FEE") else "미설정",
-    })
+# ================================================================== 대화
+with tab_chat:
+    if ss.ended:
+        st.success("대화가 종료되었습니다. **✅ 판정** 탭에서 주문서를 확인하고 통과·실패를 찍어주세요.")
 
-    flags = P.flags
-    st.markdown("**플래그 %d개** — 결과 화면 체크리스트가 여기서 자동 생성됩니다" % len(flags))
-    st.dataframe(
-        pd.DataFrame([{"키": k, "값": r.get("값", "")} for k, r in flags.items()]),
-        use_container_width=True, hide_index=True, height=260,
-    )
+    left, right = st.columns([3, 2])
 
-# ------------------------------------------------------------------ 유사어 충돌
-st.divider()
-st.subheader("유사어 충돌 미리보기")
-st.caption("2개 이상 상품에 걸리는 표현입니다. 대화에서 이 표현이 나오면 AMBIGUOUS_ALIAS 가 떠야 합니다.")
+    with left:
+        for h in ss.history:
+            with st.chat_message("user"):
+                st.write(h["user"])
+                if h.get("img_refs"):
+                    st.caption("첨부: " + ", ".join(h["img_refs"]))
+            with st.chat_message("assistant"):
+                st.write(h["bot"])
 
-syn = data["synonyms"]
-master = data["master_products"]
-name_of = dict(zip(master["item_code"], master.get("canonical_name", master["item_code"])))
+        up, prompt = None, None
+        if not ss.ended:
+            up = st.file_uploader("이미지 첨부 (여러 장 가능)", type=["png", "jpg", "jpeg", "webp"],
+                                  accept_multiple_files=True, key="up_%d" % len(ss.history))
+            prompt = st.chat_input("고객 발화를 입력하세요")
 
-grouped = syn.groupby("synonym")["item_code"].apply(lambda s: sorted(set(s)))
-collide = grouped[grouped.apply(len) > 1]
+    if prompt:
+        turn = len(ss.history) + 1
 
-if len(collide):
-    st.dataframe(
-        pd.DataFrame([
-            {"표현": a, "걸리는 상품": " ↔ ".join("%s %s" % (c, name_of.get(c, "")) for c in cs)}
-            for a, cs in collide.items()
-        ]),
-        use_container_width=True, hide_index=True,
-    )
-else:
-    st.write("충돌하는 유사어가 없습니다.")
+        new_imgs = []
+        for f in up or []:
+            ref = "img_%d" % (len(ss.images) + len(new_imgs) + 1)
+            new_imgs.append({"ref": ref, "name": f.name,
+                             "bytes": f.getvalue(), "mime": f.type or "image/jpeg"})
+        ss.images.extend(new_imgs)
 
-# 정식명이면서 다른 상품의 유사어이기도 한 표현 — EXACT_NAME_PRIORITY 가 여기서 갈린다
-overlap = []
-for code, cname in name_of.items():
-    others = [c for c in grouped.get(cname, []) if c != code]
-    if others:
-        overlap.append({
-            "표현": cname,
-            "정식명": "%s %s" % (code, cname),
-            "고객이 아니라고 할 때 제시할 후보": ", ".join("%s %s" % (c, name_of.get(c, "")) for c in others),
+        cand = LLM.candidates_for(prompt, CAT, mode)
+        system = LLM.build_system(P, mode)
+        user = LLM.build_user(prompt, ss.state, CAT, cand, mode)
+
+        usage, raw, out = {}, "", None
+        if API_KEY:
+            try:
+                out, raw, usage = LLM.call(API_KEY, model, system, user, new_imgs)
+            except Exception as e:
+                st.error("LLM 호출 실패: %s: %s" % (type(e).__name__, e))
+            if out is None:
+                st.warning("응답을 JSON 으로 읽지 못해 목 모드로 대체했습니다.")
+        if out is None:
+            out = LLM.mock(prompt, CAT, turn)
+            usage = usage or {"input": LLM.estimate_tokens(system + user),
+                              "output": LLM.estimate_tokens(out.get("reply", "")),
+                              "estimated": True}
+
+        diff = ss.state.apply(out, turn)
+        ss.state.rematch(CAT, P, mode)
+
+        # 주소가 새로 들어왔으면 검증한다. base 만 보내고 detail 은 사람이 확인한다.
+        if ss.state.address_base and not ss.state.addr_api.get("done"):
+            ss.state.addr_api = juso.search(ss.state.address_base.value, JUSO_KEY)
+            ss.state.zipno = ss.state.addr_api.get("zipno")
+            ss.state.road_addr = ss.state.addr_api.get("road_addr")
+
+        quote = ss.state.quote(CAT, P)
+        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode)
+        prev_asked = bool(ss.history and "?" in (ss.history[-1]["bot"] or ""))
+        det = FL.detect(out.get("reply", ""), ss.state, quote, P, out, prev_asked)
+
+        ss.history.append({
+            "turn": turn, "user": prompt, "bot": out.get("reply", ""),
+            "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw,
+            "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
         })
+        st.rerun()
 
-if overlap:
-    st.markdown(
-        "**정식명이면서 다른 상품의 유사어이기도 한 표현** — 흔한 경우이며 문제가 아닙니다. "
-        "`EXACT_NAME_PRIORITY = %s` 이므로 **정식명 쪽으로 확정**됩니다(거래명세서에 정식명을 넣기 때문). "
-        "고객이 '그 상품이 아니다'라고 하면 `ITEM_REJECTED` 가 뜨고 아래 상품들을 후보로 제시해 교체합니다."
-        % P.get("EXACT_NAME_PRIORITY", "미설정"))
-    st.dataframe(pd.DataFrame(overlap), use_container_width=True, hide_index=True)
+    # ---------------------------------------------------------- 주문 현황
+    with right:
+        state = ss.state
+        quote = state.quote(CAT, P)
+        fl = FL.evaluate(state, quote, CAT, P, ss.history[-1]["out"] if ss.history else {}, mode)
 
-st.divider()
-st.caption("테스터: %s · 지식 수준: %s 모드 · 모델: %s" % (tester, mode, model))
+        st.markdown("#### 주문 현황")
+
+        if fl:
+            for f in fl:
+                icon = {"차단": "🛑", "상담원연결": "🙋", "되물음": "❓",
+                        "검수필수": "🔍"}.get(f.value, "⚠️")
+                st.markdown("%s **%s** · `%s`  \n<small>%s</small>" %
+                            (icon, f.key, f.value, f.evidence), unsafe_allow_html=True)
+        else:
+            st.caption("발생한 플래그 없음")
+
+        st.divider()
+        for label, f in (("수령자명", state.receiver), ("전화번호", state.phone)):
+            st.markdown("**%s** %s <small>%s</small>" %
+                        (label, f.value or "—", f.origin), unsafe_allow_html=True)
+
+        st.markdown("**주소**")
+        st.markdown("추출: %s <small>%s</small>" %
+                    (state.address_base.value or "—", state.address_base.origin),
+                    unsafe_allow_html=True)
+        st.markdown("상세: %s" % (state.address_detail.value or "—"))
+        if state.road_addr:
+            st.markdown("API: %s  \n우편번호: **%s**" % (state.road_addr, state.zipno))
+        elif state.addr_api.get("done"):
+            st.markdown("API: 검색 결과 없음")
+
+        st.divider()
+        if quote["rows"]:
+            st.dataframe(pd.DataFrame(quote["rows"]), use_container_width=True, hide_index=True)
+            st.markdown("소계 **%s원** + 배송비 **%s원** = 합계 **%s**" % (
+                f"{quote['subtotal']:,}", f"{quote['shipping']:,}",
+                f"{quote['total']:,}원" if quote["total"] is not None else "확정 차단"))
+        else:
+            st.caption("담긴 품목 없음")
+
+        # 대화는 자연스럽게 끝나므로 LLM 은 종료를 알지 못한다. 테스터가 직접 끊는다.
+        st.divider()
+        if not ss.ended:
+            if st.button("🧾 상담 완료 — 주문서 확정", type="primary", use_container_width=True,
+                         disabled=not ss.history):
+                ss.ended = True
+                st.rerun()
+        else:
+            st.info("종료됨 · 판정 탭으로 이동")
+
+    # ---------------------------------------------------------- 관찰 패널
+    if ss.history:
+        h = ss.history[-1]
+        with st.expander("이번 턴 관찰 패널", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("누적 상태 변화")
+                st.write(h["diff"] or "변화 없음")
+                st.caption("자동 감지")
+                if h["detect"]:
+                    st.dataframe(pd.DataFrame(h["detect"]), use_container_width=True,
+                                 hide_index=True)
+                else:
+                    st.write("없음")
+                st.caption("결핍 로그 (missing_info)")
+                st.write(h["out"].get("missing_info") or "없음")
+            with c2:
+                st.caption("LLM 원본 응답")
+                st.json(h["out"], expanded=False)
+                st.caption("참조한 데이터 (used_refs)")
+                st.write(h["out"].get("used_refs") or "없음")
+                st.caption("주소 API")
+                st.write(ss.state.addr_api or "미호출")
+            u = h["usage"]
+            st.caption("토큰 입력 %s / 출력 %s %s · 모델 %s · 지식수준 %s" % (
+                u.get("input"), u.get("output"),
+                "(추정)" if u.get("estimated") else "", h["model"], mode_label))
+
+
+# ================================================================== 판정
+with tab_verdict:
+    if not ss.ended:
+        st.info("대화 탭에서 **상담 완료** 를 눌러야 판정할 수 있습니다.")
+    else:
+        state = ss.state
+        quote = state.quote(CAT, P)
+        st.markdown("### 최종 주문서")
+
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            if quote["rows"]:
+                st.dataframe(pd.DataFrame(quote["rows"]), use_container_width=True,
+                             hide_index=True)
+            else:
+                st.caption("품목 없음")
+        with c2:
+            st.write({
+                "수령자명": state.receiver.value or "—",
+                "전화번호": state.phone.value or "—",
+                "주소": state.address_base.value or "—",
+                "상세주소": state.address_detail.value or "—",
+                "우편번호": state.zipno or "—",
+                "합계": f"{quote['total']:,}원" if quote["total"] is not None else "확정 차단",
+            })
+
+        st.divider()
+        st.markdown("### 항목별 판정")
+        st.caption("주문서가 자동으로 제대로 입력되었는지 항목별로 찍어주세요. "
+                   "실패라면 원인까지 골라야 무엇을 고쳐야 하는지가 남습니다.")
+
+        verdicts = {}
+        for key, label in VERDICT_FIELDS:
+            col = st.columns([2, 1.4, 2])
+            col[0].markdown("**%s**" % label)
+            v = col[1].radio(label, ["통과", "실패"], horizontal=True,
+                             key="v_%s" % key, label_visibility="collapsed")
+            cause = col[2].selectbox("원인", CAUSE_TAGS, key="c_%s" % key,
+                                     label_visibility="collapsed",
+                                     disabled=(v == "통과"))
+            verdicts[key] = {"verdict": v, "cause": None if v == "통과" else cause}
+
+        note = st.text_area("관찰 메모", placeholder="무엇이 부족했는지, 어떤 지침이 필요한지")
+
+        if st.button("판정 저장", type="primary"):
+            ss.records.append({
+                "conv_no": ss.conv_no, "tester": tester, "mode": mode_label, "model": model,
+                "turns": len(ss.history),
+                "images": len(ss.images),
+                "tokens_in": sum(h["usage"].get("input", 0) or 0 for h in ss.history),
+                "tokens_out": sum(h["usage"].get("output", 0) or 0 for h in ss.history),
+                "verdicts": verdicts,
+                "sources": {
+                    "invoice": "image" if any(l.source == "image" for l in state.lines) else "text",
+                    "address": state.address_base.source or "text",
+                    "receiver": state.receiver.source or "text",
+                    "phone": state.phone.source or "text",
+                },
+                "note": note,
+            })
+            ss.conv_no += 1
+            reset_conversation()
+            st.success("저장했습니다. 새 대화를 시작할 수 있습니다.")
+            st.rerun()
+
+
+# ================================================================== 보고서
+with tab_report:
+    recs = ss.records
+
+    if not recs:
+        st.info("아직 판정된 대화가 없습니다. **💬 대화** 탭에서 대화를 진행하고 "
+                "**상담 완료 → 판정 저장** 을 하면 여기에 집계됩니다.")
+    else:
+        tin = sum(r["tokens_in"] for r in recs)
+        tout = sum(r["tokens_out"] for r in recs)
+        cost = sum(LLM.cost_usd(r["model"], r["tokens_in"], r["tokens_out"]) for r in recs)
+
+        c = st.columns(5)
+        c[0].metric("테스트한 대화", "%d건" % len(recs))
+        c[1].metric("LLM 호출", "%d회" % sum(r["turns"] for r in recs))
+        c[2].metric("업로드 이미지", "%d장" % sum(r["images"] for r in recs))
+        c[3].metric("토큰 (추정)", f"{tin + tout:,}",
+                    "입력 %s / 출력 %s" % (f"{tin:,}", f"{tout:,}"))
+        c[4].metric("예상 비용", "$%.3f" % cost)
+
+        st.divider()
+        st.markdown("### 항목별 성공률")
+        rows = []
+        for key, label in VERDICT_FIELDS:
+            ok = sum(1 for r in recs if r["verdicts"][key]["verdict"] == "통과")
+            rows.append({"항목": label, "통과": ok, "실패": len(recs) - ok,
+                         "성공률": "%.0f%%" % (100 * ok / len(recs))})
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("### 입력 유형별 성공률")
+        st.caption("같은 항목이라도 텍스트에서 왔는지 이미지에서 왔는지에 따라 난이도가 다릅니다.")
+        cross = []
+        for key, label in VERDICT_FIELDS:
+            for src, src_label in (("text", "텍스트"), ("image", "이미지")):
+                sub = [r for r in recs if r["sources"][key] == src]
+                if not sub:
+                    continue
+                ok = sum(1 for r in sub if r["verdicts"][key]["verdict"] == "통과")
+                cross.append({"항목": label, "입력 유형": src_label, "건수": len(sub),
+                              "통과": ok, "실패": len(sub) - ok,
+                              "성공률": "%.0f%%" % (100 * ok / len(sub))})
+        if cross:
+            st.dataframe(pd.DataFrame(cross), use_container_width=True, hide_index=True)
+        else:
+            st.caption("데이터 없음")
+
+        st.divider()
+        cc = st.columns(2)
+        with cc[0]:
+            st.markdown("### 실패 원인 순위")
+            causes = {}
+            for r in recs:
+                for key, _ in VERDICT_FIELDS:
+                    cz = r["verdicts"][key]["cause"]
+                    if cz:
+                        causes[cz] = causes.get(cz, 0) + 1
+            if causes:
+                st.dataframe(pd.DataFrame(
+                    [{"원인": k, "건수": v} for k, v in sorted(causes.items(), key=lambda x: -x[1])]),
+                    use_container_width=True, hide_index=True)
+            else:
+                st.caption("실패 없음")
+
+        with cc[1]:
+            st.markdown("### 지식 수준 모드별 비교")
+            mrows = []
+            for md in ("전체", "축소"):
+                sub = [r for r in recs if r["mode"] == md]
+                if not sub:
+                    continue
+                total = len(sub) * len(VERDICT_FIELDS)
+                ok = sum(1 for r in sub for k, _ in VERDICT_FIELDS
+                         if r["verdicts"][k]["verdict"] == "통과")
+                mrows.append({"모드": md, "대화": len(sub),
+                              "전체 성공률": "%.0f%%" % (100 * ok / total)})
+            if mrows:
+                st.dataframe(pd.DataFrame(mrows), use_container_width=True, hide_index=True)
+            else:
+                st.caption("데이터 없음")
+
+        st.divider()
+        st.markdown("### 남긴 메모")
+        for r in recs:
+            if r["note"]:
+                st.markdown("- **#%d %s (%s)** — %s" %
+                            (r["conv_no"], r["tester"], r["mode"], r["note"]))
+
+        st.download_button("결과 CSV 다운로드",
+                           pd.json_normalize(recs).to_csv(index=False).encode("utf-8-sig"),
+                           "momo_test_results.csv", "text/csv")
+
+
+# ================================================================== 데이터
+with tab_data:
+    st.caption("시트 수정이 반영됐는지 확인하는 화면입니다. 실험 결과와는 무관합니다.")
+
+    cols = st.columns(len(data))
+    for col, (name, df) in zip(cols, data.items()):
+        col.metric(name, "%d행" % len(df), origins[name])
+
+    with st.expander("지침 DB", expanded=False):
+        for w in P.validate():
+            st.warning(w)
+        st.dataframe(P.summary(), use_container_width=True, hide_index=True)
+
+    with st.expander("유사어 충돌 — AMBIGUOUS_ALIAS 가 떠야 할 지점", expanded=False):
+        syn, master = data["synonyms"], data["master_products"]
+        name_of = dict(zip(master["item_code"],
+                           master.get("canonical_name", master["item_code"])))
+        grouped = syn.groupby("synonym")["item_code"].apply(lambda s: sorted(set(s)))
+        collide = grouped[grouped.apply(len) > 1]
+        if len(collide):
+            st.dataframe(pd.DataFrame([
+                {"표현": a, "걸리는 상품": " ↔ ".join("%s %s" % (c, name_of.get(c, "")) for c in cs)}
+                for a, cs in collide.items()]), use_container_width=True, hide_index=True)
+        else:
+            st.write("없음")

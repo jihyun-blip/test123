@@ -1,0 +1,260 @@
+# -*- coding: utf-8 -*-
+"""
+LLM 입출력 계약.
+
+LLM 은 이해만 하고 판단과 계산은 코드가 한다.
+자연어·이미지를 구조화된 데이터로 바꾸는 것과, 확정된 값을 문장으로 옮기는 것만 맡는다.
+
+매 턴 LLM 이 돌려주는 것은 "이번 턴에서 파악한 변경"이지 누적 목록 전체가 아니다.
+null 은 "이번 턴에 언급 없음"이며, 코드가 기존 값을 유지한다.
+"""
+import difflib
+import json
+import re
+
+from . import matching as M
+
+# 100만 토큰당 달러. 비용 추정용이며 정확한 청구액이 아니다.
+PRICING = {
+    "gemini-3.5-flash":     (0.15, 1.25),
+    "gemini-3.1-pro":       (2.00, 12.00),
+    "gemini-3.1-pro-preview": (2.00, 12.00),
+    "gemini-2.5-flash":     (0.15, 1.25),
+    "gemini-2.5-pro":       (1.25, 10.00),
+}
+DEFAULT_PRICE = (0.15, 1.25)
+
+OUTPUT_CONTRACT = """\
+반드시 아래 JSON 하나만 출력한다. 설명 문장을 덧붙이지 않는다.
+
+{
+  "reply": "고객에게 보낼 답변 문장",
+  "item_ops": [
+    {"op":"add|update|remove|reject|choose","raw_text":"뒷다리 3개","name_hint":"뒷다리",
+     "quantity":3,"unit_expr":"개","label_code":null,"printed_name":null,
+     "chosen_code":null,"source":"text|image","source_ref":"turn_3|img_2"}
+  ],
+  "receiver": {"value":"홍길동","source":"text","source_ref":"turn_2"},
+  "phone": null,
+  "address": {"base":"서울시 강남구 테헤란로 123","detail":"101동 1002호",
+              "source":"image","source_ref":"img_2"},
+  "intent": "order|question|payment_claim|info_provide|complaint|smalltalk|other",
+  "handoff_request": false,
+  "angry": false,
+  "missing_info": [{"asked":"원산지가 어디예요?","needed":"상품별 원산지","found":false}],
+  "used_refs": {"products":["A0022"],"synonyms":["뒷다리"],"policies":["TONE"]}
+}
+
+규칙:
+- item_ops 는 이번 턴의 변경만 담는다. 누적 목록 전체를 다시 보내지 않는다.
+  "삼겹살은 빼주세요" → remove, "3개로 바꿔주세요" → update.
+  고객이 확정된 품목이 아니라고 하면 → reject.
+  제시한 후보 중 하나를 고르면 → choose 와 chosen_code.
+- 이번 턴에 언급이 없는 항목은 null 로 둔다. 빈 문자열을 쓰지 않는다.
+- address 는 base(도로명/지번까지)와 detail(동·호)로 반드시 분리한다.
+- unit_expr 는 고객이 실제로 쓴 표현("개","키로","박스")을 그대로 담는다.
+- 금액을 직접 계산하거나 문장에 쓰지 않는다. 금액은 코드가 계산해 별도로 표시한다.
+- DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
+"""
+
+
+def estimate_tokens(text):
+    """한국어는 대략 2자당 1토큰. 정확한 값이 아니라 감을 잡기 위한 추정이다."""
+    return max(1, int(len(str(text or "")) / 2))
+
+
+def cost_usd(model, tin, tout):
+    pin, pout = PRICING.get(model, DEFAULT_PRICE)
+    return (tin / 1_000_000) * pin + (tout / 1_000_000) * pout
+
+
+def candidates_for(text, catalog, mode, limit=8):
+    """상품 마스터 전체를 프롬프트에 붓지 않는다. 검색으로 좁힌 것만 넘긴다."""
+    text = str(text or "")
+    hits = []
+
+    if mode == "full":
+        for expr, codes in list(catalog.by_synonym.items()) + list(catalog.by_canonical.items()):
+            if expr and expr in text:
+                hits.extend(codes)
+        seen, out = set(), []
+        for c in hits:
+            if c not in seen:
+                seen.add(c)
+                out.append(c)
+        if out:
+            return out[:limit]
+
+    # 축소 모드이거나 사전에서 못 찾았을 때 — 표시명 문자열 유사도 상위 5개
+    scored = sorted(
+        ((difflib.SequenceMatcher(None, text, catalog.display(c)).ratio(), c) for c in catalog.items),
+        reverse=True)[:5]
+    return [c for _, c in scored]
+
+
+def build_system(policies, mode):
+    """축소 모드는 지침 DB 를 쓰지 않고 일반적인 CS 지시문만 사용한다."""
+    if mode == "reduced":
+        return ("당신은 온라인 식료품 쇼핑몰의 고객 상담 챗봇입니다. "
+                "친절하게 응대하고 고객의 주문을 도와주세요.\n\n" + OUTPUT_CONTRACT)
+
+    lines = ["당신은 모모플러스의 주문 상담 챗봇입니다. 아래 운영 지침을 반드시 따릅니다.", ""]
+    for r in policies.prompt_rules():
+        lines.append("- [%s] %s = %s : %s" % (
+            r.get("구분", ""), r.get("키", ""), r.get("값", ""), r.get("설명", "")))
+    lines += ["", OUTPUT_CONTRACT]
+    return "\n".join(lines)
+
+
+def build_user(text, state, catalog, cand_codes, mode):
+    parts = []
+
+    if state.lines or state.receiver or state.address_base:
+        cur = []
+        for l in state.lines:
+            mark = ""
+            if l.rejected:
+                alts = ", ".join("%s(%s)" % (c, catalog.display(c)) for c in l.alternatives)
+                mark = " ← 고객이 아니라고 함. 후보: %s" % (alts or "없음")
+            cur.append("  - %s ×%s%s" % (l.key, l.quantity, mark))
+        if cur:
+            parts.append("[현재까지 담긴 품목]\n" + "\n".join(cur))
+        info = []
+        for label, f in (("수령인", state.receiver), ("전화", state.phone),
+                         ("주소", state.address_base), ("상세주소", state.address_detail)):
+            if f:
+                info.append("  - %s: %s" % (label, f.value))
+        if info:
+            parts.append("[이미 확보한 정보 — 다시 묻지 않는다]\n" + "\n".join(info))
+
+    if cand_codes:
+        rows = []
+        for c in cand_codes:
+            r = catalog.items.get(c, {})
+            if mode == "reduced":
+                # 축소 모드는 표시명과 가격만 전달한다
+                rows.append("  - %s / %s원" % (catalog.display(c), catalog.price(c)))
+            else:
+                # 전체 모드는 시트에 있는 모든 컬럼을 그대로 넘긴다
+                rows.append("  - " + " / ".join(
+                    "%s=%s" % (k, v) for k, v in r.items() if str(v).strip()))
+        parts.append("[후보 상품]\n" + "\n".join(rows))
+
+    parts.append("[고객 발화]\n" + str(text or ""))
+    return "\n\n".join(parts)
+
+
+def parse(raw):
+    """모델이 코드펜스를 붙이거나 앞뒤에 말을 덧붙여도 JSON 을 건져낸다."""
+    s = str(raw or "").strip()
+    s = re.sub(r"^```(?:json)?|```$", "", s, flags=re.M).strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", s, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            pass
+    return None
+
+
+def call(api_key, model, system, user, images=None):
+    """반환값은 (출력 dict, 원본 텍스트, 사용량 dict)."""
+    if not api_key:
+        return None, "", {}
+
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=api_key)
+
+    contents = []
+    for img in images or []:
+        contents.append(types.Part.from_bytes(data=img["bytes"], mime_type=img["mime"]))
+    contents.append(user)
+
+    resp = client.models.generate_content(
+        model=model,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            response_mime_type="application/json",
+            temperature=0.2,
+        ),
+    )
+
+    text = resp.text or ""
+    um = getattr(resp, "usage_metadata", None)
+    usage = {
+        "input": getattr(um, "prompt_token_count", None) or estimate_tokens(system + user),
+        "output": getattr(um, "candidates_token_count", None) or estimate_tokens(text),
+        "estimated": um is None,
+    }
+    return parse(text), text, usage
+
+
+# ------------------------------------------------------------------ 목 모드
+_QTY = re.compile(r"([가-힣A-Za-z]+)\s*([0-9]+)\s*(개|키로|kg|박스|팩|근)?")
+_PHONE = re.compile(r"01[016789][-\s]?\d{3,4}[-\s]?\d{4}")
+_ADDR = re.compile(r"([가-힣]+(?:시|도)\s*[가-힣]+(?:시|군|구)[^,\n]*)")
+
+
+def mock(text, catalog, turn):
+    """API 키가 없어도 화면이 뜨고 조작이 가능해야 한다.
+    규칙 기반이라 품질은 낮지만 흐름 전체를 눌러볼 수 있다."""
+    out = {"reply": "", "item_ops": [], "receiver": None, "phone": None,
+           "address": None, "intent": "other", "handoff_request": False,
+           "angry": False, "missing_info": [], "used_refs": {}}
+
+    t = str(text or "")
+
+    for m in _QTY.finditer(t):
+        name, qty, unit = m.group(1), int(m.group(2)), m.group(3) or "개"
+        if name in catalog.by_synonym or name in catalog.by_canonical:
+            out["item_ops"].append({
+                "op": "add", "raw_text": m.group(0), "name_hint": name,
+                "quantity": qty, "unit_expr": unit,
+                "source": "text", "source_ref": "turn_%d" % turn})
+
+    if not out["item_ops"]:
+        for expr in list(catalog.by_synonym) + list(catalog.by_canonical):
+            if expr and expr in t:
+                out["item_ops"].append({
+                    "op": "add", "raw_text": expr, "name_hint": expr, "quantity": 1,
+                    "unit_expr": "개", "source": "text", "source_ref": "turn_%d" % turn})
+                break
+
+    p = _PHONE.search(t)
+    if p:
+        out["phone"] = {"value": p.group(0), "source": "text", "source_ref": "turn_%d" % turn}
+
+    a = _ADDR.search(t)
+    if a:
+        base = a.group(1).strip()
+        detail = None
+        d = re.search(r"(\d+동\s*\d+호|\d+호)", t)
+        if d:
+            detail = d.group(1)
+            base = base.replace(detail, "").strip()
+        out["address"] = {"base": base, "detail": detail,
+                          "source": "text", "source_ref": "turn_%d" % turn}
+
+    if re.search(r"화(났|나)|짜증|불만", t):
+        out["angry"] = True
+    if re.search(r"상담원|사람", t):
+        out["handoff_request"] = True
+    if re.search(r"입금(했|완료)", t):
+        out["intent"] = "payment_claim"
+    elif out["item_ops"]:
+        out["intent"] = "order"
+    elif "?" in t or re.search(r"뭐|어때|맛있", t):
+        out["intent"] = "question"
+
+    if re.search(r"아니|말고|틀렸|다른거", t):
+        out["item_ops"] = [{"op": "reject", "name_hint": ""}]
+
+    out["reply"] = "(목 모드 응답) 말씀 확인했습니다."
+    return out
