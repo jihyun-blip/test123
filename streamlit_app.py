@@ -205,7 +205,7 @@ with tab_chat:
 
         latency_ms = int((time.time() - t0) * 1000)
 
-        diff = ss.state.apply(out, turn)
+        diff = ss.state.apply(out, turn, CAT, P)
         ss.state.rematch(CAT, P, mode)
 
         # 전화번호를 이미지에서 뽑았다면 같은 이미지를 한 번 더 읽어 대조한다.

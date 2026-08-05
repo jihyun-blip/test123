@@ -100,12 +100,12 @@ class OrderState:
         self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     # ---------------------------------------------------------------- 누적
-    def apply(self, out, turn):
+    def apply(self, out, turn, catalog=None, policies=None):
         """LLM 출력 한 턴치를 누적 상태에 반영한다. 반환값은 변화 요약."""
         before = self.snapshot()
 
         for op in out.get("item_ops") or []:
-            self._apply_op(op, turn)
+            self._apply_op(op, turn, catalog, policies)
 
         self.receiver.apply(out.get("receiver"), turn)
         self.phone.apply(out.get("phone"), turn)
@@ -125,15 +125,37 @@ class OrderState:
 
         return self.diff(before)
 
-    def _apply_op(self, op, turn):
+    def _find(self, hint, catalog, policies):
+        """같은 품목을 가리키는 줄을 찾는다.
+
+        고객 표현이 턴마다 달라진다. 사진에서 'A0026' 으로 담겼다가 다음 턴에
+        '소꼬리' 로 불리는 식이다. 표현만 비교하면 같은 상품이 두 줄로 쌓이고,
+        먼저 담긴 줄은 수량이 채워지지 않아 같은 질문을 무한히 반복하게 된다."""
+        for l in self.lines:
+            if l.key == hint:
+                return l
+
+        if catalog is None or not hint:
+            return None
+
+        m = M.match({"name_hint": hint}, catalog, policies, "full")
+        if m.status != M.CONFIRMED:
+            return None
+        for l in self.lines:
+            if l.match and l.match.status == M.CONFIRMED and l.match.code == m.code:
+                return l
+        return None
+
+    def _apply_op(self, op, turn, catalog=None, policies=None):
         act = (op.get("op") or "add").lower()
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
 
         if act == "remove":
-            self.lines = [l for l in self.lines if l.key != hint]
+            target = self._find(hint, catalog, policies)
+            self.lines = [l for l in self.lines if l is not target]
             return
 
-        existing = next((l for l in self.lines if l.key == hint), None)
+        existing = self._find(hint, catalog, policies)
 
         # 고객이 "그 상품이 아니다" — 확정을 풀고 대체 후보를 받을 상태로 둔다
         if act == "reject" and existing:
@@ -190,6 +212,27 @@ class OrderState:
                 line.alternatives = catalog.alternatives(line.match.code)
             else:
                 line.alternatives = []
+
+        self._merge_same_product()
+
+    def _merge_same_product(self):
+        """같은 상품을 가리키는 줄이 둘 이상이면 하나로 합친다.
+        수량이 있는 쪽을 살리고, 둘 다 있으면 더한다."""
+        seen, kept = {}, []
+        for line in self.lines:
+            code = line.match.code if (line.match and line.match.status == M.CONFIRMED) else None
+            if code is None or code not in seen:
+                if code is not None:
+                    seen[code] = line
+                kept.append(line)
+                continue
+            first = seen[code]
+            if first.quantity is None:
+                first.quantity = line.quantity
+                first.unit_expr = line.unit_expr or first.unit_expr
+            elif line.quantity is not None:
+                first.quantity += line.quantity
+        self.lines = kept
 
     # ---------------------------------------------------------------- 견적
     def quote(self, catalog, policies):
