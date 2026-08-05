@@ -11,3 +11,8 @@ uploads/
 우편번호 승인키.txt
 *.docx
 *.xlsx
+
+# 어떤 형태로든 키가 저장소에 들어가지 않게 한다
+.env
+.env.*
+*.key
