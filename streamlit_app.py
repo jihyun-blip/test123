@@ -217,10 +217,16 @@ with tab_chat:
         fixed, kind = RP.build(ss.state, quote, CAT, P, ss.history)
         tail = (out.get("reply") or "").strip() if err is None else ""
 
+        # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.
+        # 지침의 SMALLTALK 이 짧은 잡담을 허용하고, SMALLTALK_RETURN 이 복귀를 요구한다.
+        digression = out.get("intent") in ("smalltalk", "question", "complaint")
+
         # 코드가 품목을 되묻는 중이면 LLM 의 덧붙임을 버린다.
         # 한 턴에 질문이 둘이면 고객이 무엇에 답해야 할지 모르고,
         # 확정되지도 않았는데 "담아드렸어요" 같은 말이 섞인다.
-        if kind in RP.ASK_STAGES or (kind_before in RP.ASK_STAGES and kind != kind_before):
+        # 다만 잡담·질문에 대한 답은 예외다. 그걸 버리면 사람 말을 무시하는 봇이 된다.
+        if not digression and (kind in RP.ASK_STAGES
+                               or (kind_before in RP.ASK_STAGES and kind != kind_before)):
             tail = ""
 
         # 무엇이 비었는지는 코드가 알고, 묻는 문장은 LLM 이 만든다.
@@ -233,7 +239,6 @@ with tab_chat:
 
         # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
         # 흐름을 되돌리는 코드 문장이 뒤에 붙어야 자연스럽다.
-        digression = out.get("intent") in ("smalltalk", "question", "complaint")
         order = (tail, fixed) if (digression and tail) else (fixed, tail)
         bot = "\n\n".join(x for x in order if x) or "(응답 없음)"
 
