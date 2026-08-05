@@ -89,6 +89,11 @@ def _j(v):
     return json.dumps(v, ensure_ascii=False, default=str)
 
 
+def _avg(values):
+    nums = [v for v in values if isinstance(v, (int, float))]
+    return int(sum(nums) / len(nums)) if nums else ""
+
+
 def build_rows(conv_id, tester, mode_label, model, state, quote, history,
                verdicts, sources, note, policy_version, started_at, ended_at,
                flag_settings):
@@ -112,6 +117,11 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
         "subtotal": quote["subtotal"],
         "shipping_fee": quote["shipping"],
         "total": quote["total"] if quote["total"] is not None else "",
+        # 토큰·지연은 대화 단위로도 남긴다. turns 를 매번 합산하지 않고 보고서에서 바로 쓰기 위해서다.
+        "tokens_in": sum((h.get("usage") or {}).get("input") or 0 for h in history),
+        "tokens_out": sum((h.get("usage") or {}).get("output") or 0 for h in history),
+        "latency_avg_ms": _avg(h.get("latency_ms") for h in history),
+        "latency_max_ms": max([h.get("latency_ms") or 0 for h in history] or [0]),
         "note": note,
     })
 

@@ -441,6 +441,9 @@ with tab_verdict:
                 "turns": len(ss.history), "images": len(ss.images),
                 "tokens_in": sum(h["usage"].get("input", 0) or 0 for h in ss.history),
                 "tokens_out": sum(h["usage"].get("output", 0) or 0 for h in ss.history),
+                "latency_avg": int(sum(h.get("latency_ms") or 0 for h in ss.history)
+                                   / max(1, len(ss.history))),
+                "latency_max": max([h.get("latency_ms") or 0 for h in ss.history] or [0]),
                 "verdicts": verdicts, "sources": sources, "note": note,
             }
             ss.records.append(rec)
@@ -513,7 +516,9 @@ def records_from_sheet():
             "conv_no": cid, "tester": c.get("tester_name", ""),
             "mode": c.get("knowledge_mode", ""), "model": c.get("model", ""),
             "turns": num(c.get("turn_count")), "images": num(c.get("image_count")),
-            "tokens_in": 0, "tokens_out": 0,
+            "tokens_in": num(c.get("tokens_in")), "tokens_out": num(c.get("tokens_out")),
+            "latency_avg": num(c.get("latency_avg_ms")),
+            "latency_max": num(c.get("latency_max_ms")),
             "verdicts": verdicts, "sources": sources, "note": c.get("note", ""),
         })
     return out, None
@@ -533,12 +538,6 @@ with tab_report:
             recs = ss.records
         else:
             st.caption("로그 시트에서 읽었습니다. 두 테스터의 기록이 함께 집계됩니다.")
-            # 토큰은 시트에 대화 단위로 남기지 않으므로 이 세션 값으로 보정한다
-            tok = {r["conversation_id"]: r for r in ss.records}
-            for r in recs:
-                m = tok.get(r["conv_no"])
-                if m:
-                    r["tokens_in"], r["tokens_out"] = m["tokens_in"], m["tokens_out"]
     else:
         recs = ss.records
         st.warning("Apps Script 로그가 설정되지 않아 **이 브라우저 세션 안에서만** 집계됩니다. "
@@ -560,6 +559,12 @@ with tab_report:
         c[3].metric("토큰 (추정)", f"{tin + tout:,}",
                     "입력 %s / 출력 %s" % (f"{tin:,}", f"{tout:,}"))
         c[4].metric("예상 비용", "$%.3f" % cost)
+
+        lat = [_num(r.get("latency_avg")) for r in recs if _num(r.get("latency_avg"))]
+        if lat:
+            mx = max(_num(r.get("latency_max")) for r in recs)
+            st.caption("응답 시간 — 평균 %.1f초 · 최대 %.1f초 (자체 구축 시 체감 속도의 실측값)"
+                       % (sum(lat) / len(lat) / 1000, mx / 1000))
 
         st.divider()
         st.markdown("### 항목별 성공률")
