@@ -110,12 +110,15 @@ for code, cname in name_of.items():
         overlap.append({
             "표현": cname,
             "정식명": "%s %s" % (code, cname),
-            "유사어로도 걸림": ", ".join("%s %s" % (c, name_of.get(c, "")) for c in others),
+            "고객이 아니라고 할 때 제시할 후보": ", ".join("%s %s" % (c, name_of.get(c, "")) for c in others),
         })
 
 if overlap:
-    st.markdown("**정식명이면서 다른 상품의 유사어이기도 한 표현** — "
-                "`EXACT_NAME_PRIORITY = %s` 규칙이 여기서 갈립니다." % P.get("EXACT_NAME_PRIORITY", "미설정"))
+    st.markdown(
+        "**정식명이면서 다른 상품의 유사어이기도 한 표현** — 흔한 경우이며 문제가 아닙니다. "
+        "`EXACT_NAME_PRIORITY = %s` 이므로 **정식명 쪽으로 확정**됩니다(거래명세서에 정식명을 넣기 때문). "
+        "고객이 '그 상품이 아니다'라고 하면 `ITEM_REJECTED` 가 뜨고 아래 상품들을 후보로 제시해 교체합니다."
+        % P.get("EXACT_NAME_PRIORITY", "미설정"))
     st.dataframe(pd.DataFrame(overlap), use_container_width=True, hide_index=True)
 
 st.divider()
