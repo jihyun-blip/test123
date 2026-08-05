@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.18"
+APP_VERSION = "2026-08-05.19"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -81,11 +81,17 @@ MODEL_LIST = sheets.secret("MODELS", ["(목 모드)"])
 model = head[2].selectbox("모델", MODEL_LIST)
 
 def overload_backup(current):
-    """과부하 때 대신 부를 모델. 설정된 목록에서 가장 여유 있는 등급을 고른다."""
-    for m in MODEL_LIST:
-        if m != current and "flash" in str(m).lower():
-            return m
-    return None
+    """과부하 때 대신 부를 모델.
+
+    설정된 목록에서 현재 모델보다 싼 것 중 가장 비싼 것을 고른다. 한 단계만
+    내려가야 판독 능력을 덜 잃는다. 대체가 더 비싼 모델을 부르는 일은 없어야
+    하므로, 이름이 아니라 단가로 판단한다."""
+    def price(m):
+        pin, pout = LLM.PRICING.get(m, LLM.DEFAULT_PRICE)
+        return pin + pout
+
+    cheaper = [m for m in MODEL_LIST if m != current and price(m) < price(current)]
+    return max(cheaper, key=price) if cheaper else None
 if head[3].button("DB 새로고침", width="stretch"):
     sheets.clear_cache()
     st.rerun()

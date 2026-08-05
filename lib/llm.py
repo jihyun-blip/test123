@@ -19,7 +19,9 @@ PRICING = {
     "gemini-3.5-flash":     (0.15, 1.25),
     "gemini-3.1-pro":       (2.00, 12.00),
     "gemini-3.1-pro-preview": (2.00, 12.00),
+    "gemini-3.5-flash-lite": (0.10, 0.40),
     "gemini-2.5-flash":     (0.15, 1.25),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
     "gemini-2.5-pro":       (1.25, 10.00),
 }
 DEFAULT_PRICE = (0.15, 1.25)
