@@ -472,6 +472,14 @@ with tab_verdict:
 
 
 # ================================================================== 보고서
+def _num(v):
+    """시트에서 읽은 값은 모두 문자열이다. 숫자로 못 바꾸면 0으로 본다."""
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
 def records_from_sheet():
     """로그 시트에서 두 테스터의 기록을 함께 읽어 보고서용 형태로 맞춘다."""
     convs, e1 = LOG.read("conversations")
@@ -540,14 +548,15 @@ with tab_report:
         st.info("아직 판정된 대화가 없습니다. **💬 대화** 탭에서 대화를 진행하고 "
                 "**상담 완료 → 판정 저장** 을 하면 여기에 집계됩니다.")
     else:
-        tin = sum(r["tokens_in"] for r in recs)
-        tout = sum(r["tokens_out"] for r in recs)
-        cost = sum(LLM.cost_usd(r["model"], r["tokens_in"], r["tokens_out"]) for r in recs)
+        tin = sum(_num(r["tokens_in"]) for r in recs)
+        tout = sum(_num(r["tokens_out"]) for r in recs)
+        cost = sum(LLM.cost_usd(r["model"], _num(r["tokens_in"]), _num(r["tokens_out"]))
+                   for r in recs)
 
         c = st.columns(5)
         c[0].metric("테스트한 대화", "%d건" % len(recs))
-        c[1].metric("LLM 호출", "%d회" % sum(r["turns"] for r in recs))
-        c[2].metric("업로드 이미지", "%d장" % sum(r["images"] for r in recs))
+        c[1].metric("LLM 호출", "%d회" % sum(_num(r["turns"]) for r in recs))
+        c[2].metric("업로드 이미지", "%d장" % sum(_num(r["images"]) for r in recs))
         c[3].metric("토큰 (추정)", f"{tin + tout:,}",
                     "입력 %s / 출력 %s" % (f"{tin:,}", f"{tout:,}"))
         c[4].metric("예상 비용", "$%.3f" % cost)
@@ -617,7 +626,8 @@ with tab_report:
         st.markdown("### 남긴 메모")
         for r in recs:
             if r["note"]:
-                st.markdown("- **#%d %s (%s)** — %s" %
+                # 세션 기록은 번호, 시트 기록은 대화 ID 라 형식을 숫자로 고정하면 안 된다
+                st.markdown("- **%s · %s (%s)** — %s" %
                             (r["conv_no"], r["tester"], r["mode"], r["note"]))
 
         st.download_button("결과 CSV 다운로드",
