@@ -14,6 +14,7 @@
 그 뒤에 이 문장이 따라붙으므로 대화가 자연스럽게 제자리로 돌아온다.
 """
 import difflib
+import re
 
 from . import matching as M
 
@@ -36,6 +37,14 @@ ASK_STAGES = {"order_ask", "ambiguous_ask", "reject_ask",
 
 def won(n):
     return "%s원" % f"{int(n):,}"
+
+
+def spoken(expr):
+    """고객에게 되읊을 표현. 내부 품목코드는 지운다.
+    코드는 우리 식별자일 뿐이고, 고객은 그게 무엇인지 모른다."""
+    cleaned = re.sub(r"\b[A-Za-z]\d{3,}\b", "", str(expr or ""))
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,-")
+    return cleaned or "말씀하신 상품"
 
 
 def nearest(expr, catalog, top=3, floor=0.3):
@@ -104,14 +113,14 @@ def _body(state, quote, catalog, policies):
         if l.rejected and l.alternatives:
             opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                               for c in l.alternatives)
-            return ("말씀하신 '%s'는 %s 중 어떤 것일까요?" % (l.key, opts), "reject_ask")
+            return ("말씀하신 '%s'는 %s 중 어떤 것일까요?" % (spoken(l.key), opts), "reject_ask")
 
     if policies.get("AMBIGUOUS_ALIAS") == "되물음":
         for l in lines:
             if l.match and l.match.status == M.AMBIGUOUS:
                 opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
                                   for c in l.match.candidates)
-                return ("'%s'는 %s 중 어떤 것을 말씀하시는 걸까요?" % (l.key, opts), "ambiguous_ask")
+                return ("'%s'는 %s 중 어떤 것을 말씀하시는 걸까요?" % (spoken(l.key), opts), "ambiguous_ask")
 
     # DB 에 없는 표현 — "못 찾았다"로 끝내지 않고 가장 가까운 상품을 들이민다.
     # 되물음은 대화를 끝내는 것이 아니라 거래명세서를 완성하려고 정보를 채우는 과정이다.
@@ -124,9 +133,9 @@ def _body(state, quote, catalog, policies):
                                       for c in near)
                     return ("'%s'는 이 중 어떤 것일까요? %s\n"
                             "이 중에 없으면 상품 사진을 보내주시면 찾아드릴게요."
-                            % (l.key, opts), "notfound_ask")
+                            % (spoken(l.key), opts), "notfound_ask")
                 return ("'%s'가 어떤 상품인지 조금만 더 알려주시겠어요? 사진을 보내주셔도 좋아요."
-                        % l.key, "notfound_ask")
+                        % spoken(l.key), "notfound_ask")
 
     if not lines:
         return ("찾으시는 상품을 말씀해주시면 장바구니에 담아드릴게요. "
@@ -135,7 +144,7 @@ def _body(state, quote, catalog, policies):
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
         return ("%s는 몇 개 필요하신가요?"
-                % ", ".join("'%s'" % l.key for l in no_qty), "quantity_ask")
+                % ", ".join("'%s'" % spoken(l.key) for l in no_qty), "quantity_ask")
 
     if quote["blocked"]:
         miss = [r["표현"] for r in quote["rows"] if r["단가"] is None]

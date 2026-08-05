@@ -103,6 +103,14 @@ def match(op, catalog, policies, mode="full"):
     label = (op.get("label_code") or "").strip()
     printed = (op.get("printed_name") or "").strip()
 
+    # 고객이 품목코드를 직접 적는 경우가 있다. LLM 이 그걸 name_hint 에 넣어 보내면
+    # 유사어 사전에 없어 미발견이 되고, 되물음 문장에 코드가 그대로 노출된다.
+    if not label:
+        for token in re.findall(r"[A-Za-z]\d{3,}", hint):
+            if token.upper() in catalog.label_codes():
+                label = token.upper()
+                break
+
     # 1. 라벨코드 — 유효 코드 목록에 존재하면 확정
     if label and label in catalog.label_codes():
         # 2. 인쇄 상품명이 함께 읽혔으면 대조한다
