@@ -13,6 +13,7 @@ from lib import juso
 from lib import llm as LLM
 from lib import matching as M
 from lib import policies as pol
+from lib import reply as RP
 from lib import sheets
 from lib.order import OrderState
 
@@ -96,6 +97,8 @@ with tab_chat:
                     st.caption("첨부: " + ", ".join(h["img_refs"]))
             with st.chat_message("assistant"):
                 st.write(h["bot"])
+                if h.get("error"):
+                    st.error("LLM 미사용 · 목 모드로 대체됨 — %s" % h["error"])
 
         up, prompt = None, None
         if not ss.ended:
@@ -115,21 +118,25 @@ with tab_chat:
 
         cand = LLM.candidates_for(prompt, CAT, mode)
         system = LLM.build_system(P, mode)
+
+        # 1차 호출 — 발화에서 구조화된 데이터만 뽑는다
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode)
 
-        usage, raw, out = {}, "", None
+        usage, raw, out, err = {}, "", None, None
         if API_KEY:
             try:
                 out, raw, usage = LLM.call(API_KEY, model, system, user, new_imgs)
+                if out is None:
+                    err = "응답을 JSON 으로 읽지 못했습니다"
             except Exception as e:
-                st.error("LLM 호출 실패: %s: %s" % (type(e).__name__, e))
-            if out is None:
-                st.warning("응답을 JSON 으로 읽지 못해 목 모드로 대체했습니다.")
+                err = "%s: %s" % (type(e).__name__, e)
+        else:
+            err = "GEMINI_API_KEY 가 설정되지 않았습니다"
+
         if out is None:
             out = LLM.mock(prompt, CAT, turn)
             usage = usage or {"input": LLM.estimate_tokens(system + user),
-                              "output": LLM.estimate_tokens(out.get("reply", "")),
-                              "estimated": True}
+                              "output": 0, "estimated": True}
 
         diff = ss.state.apply(out, turn)
         ss.state.rematch(CAT, P, mode)
@@ -141,13 +148,19 @@ with tab_chat:
             ss.state.road_addr = ss.state.addr_api.get("road_addr")
 
         quote = ss.state.quote(CAT, P)
+
+        # 거래명세서·되물음은 코드가 조립한다. LLM 에게 금액을 맡기지 않는다.
+        fixed, kind = RP.build(ss.state, quote, CAT, P, ss.history)
+        tail = (out.get("reply") or "").strip() if err is None else ""
+        bot = "\n\n".join(x for x in (fixed, tail) if x) or "(응답 없음)"
+
         fl = FL.evaluate(ss.state, quote, CAT, P, out, mode)
         prev_asked = bool(ss.history and "?" in (ss.history[-1]["bot"] or ""))
-        det = FL.detect(out.get("reply", ""), ss.state, quote, P, out, prev_asked)
+        det = FL.detect(bot, ss.state, quote, P, out, prev_asked)
 
         ss.history.append({
-            "turn": turn, "user": prompt, "bot": out.get("reply", ""),
-            "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw,
+            "turn": turn, "user": prompt, "bot": bot, "fixed": fixed, "kind": kind,
+            "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw, "error": err,
             "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
         })
         st.rerun()

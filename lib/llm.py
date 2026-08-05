@@ -53,7 +53,9 @@ OUTPUT_CONTRACT = """\
 - 이번 턴에 언급이 없는 항목은 null 로 둔다. 빈 문자열을 쓰지 않는다.
 - address 는 base(도로명/지번까지)와 detail(동·호)로 반드시 분리한다.
 - unit_expr 는 고객이 실제로 쓴 표현("개","키로","박스")을 그대로 담는다.
-- 금액을 직접 계산하거나 문장에 쓰지 않는다. 금액은 코드가 계산해 별도로 표시한다.
+- reply 에 금액·품목 목록·계좌번호를 쓰지 않는다. 거래명세서와 되물음 문장은 코드가 이미
+  조립해 고객에게 전달했다. reply 에는 그 뒤에 덧붙일 말만 쓴다.
+  덧붙일 말이 없으면 reply 를 빈 문자열로 둔다. 같은 내용을 반복하지 않는다.
 - DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
 """
 
@@ -106,8 +108,14 @@ def build_system(policies, mode):
     return "\n".join(lines)
 
 
-def build_user(text, state, catalog, cand_codes, mode):
+def build_user(text, state, catalog, cand_codes, mode, fixed_reply=None, upsell=None):
     parts = []
+
+    if fixed_reply:
+        parts.append("[코드가 이미 고객에게 보낸 문장 — 반복하지 말 것]\n" + fixed_reply)
+    if upsell:
+        parts.append("[무료배송까지 %s원 남음 — 지침이 허용하면 추가 구매를 제안할 수 있다]"
+                     % f"{upsell['gap']:,}")
 
     if state.lines or state.receiver or state.address_base:
         cur = []

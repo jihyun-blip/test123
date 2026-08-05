@@ -59,7 +59,7 @@ class Line:
     def __init__(self, raw_text, name_hint, quantity, unit_expr, source, source_ref, turn):
         self.raw_text = raw_text
         self.name_hint = name_hint
-        self.quantity = quantity or 1
+        self.quantity = quantity   # None 이면 고객이 수량을 말하지 않은 것
         self.unit_expr = unit_expr or ""
         self.source = source
         self.source_ref = source_ref
@@ -150,7 +150,9 @@ class OrderState:
 
         if existing:
             # 같은 표현이 다시 나오면 수량을 더한다
-            existing.quantity += op.get("quantity") or 1
+            q = op.get("quantity")
+            if q is not None:
+                existing.quantity = (existing.quantity or 0) + q
             return
 
         self.lines.append(Line(
@@ -191,7 +193,7 @@ class OrderState:
             confirmed = line.match and line.match.status == M.CONFIRMED and not line.rejected
             code = line.match.code if confirmed else None
             unit = catalog.price(code) if code else None
-            amount = unit * line.quantity if unit is not None else None
+            amount = unit * line.quantity if (unit is not None and line.quantity) else None
             if amount is None:
                 blocked = True
             else:
