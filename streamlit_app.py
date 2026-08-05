@@ -24,7 +24,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.09"
+APP_VERSION = "2026-08-05.10"
 
 TESTERS = ["이지현", "김경민"]
 
@@ -76,10 +76,10 @@ mode_label = head[1].radio("지식 수준", ["전체", "축소"], horizontal=Tru
                            help="축소 모드는 외부 개발사가 실제로 갖게 될 수준을 재현합니다")
 mode = "full" if mode_label == "전체" else "reduced"
 model = head[2].selectbox("모델", sheets.secret("MODELS", ["(목 모드)"]))
-if head[3].button("DB 새로고침", use_container_width=True):
+if head[3].button("DB 새로고침", width="stretch"):
     sheets.clear_cache()
     st.rerun()
-if head[4].button("대화 초기화", use_container_width=True):
+if head[4].button("대화 초기화", width="stretch"):
     reset_conversation()
     st.rerun()
 
@@ -120,7 +120,7 @@ with tab_chat:
                         img = next((i for i in ss.images if i["ref"] == ref), None)
                         if img:
                             col.image(img["bytes"], caption="%s %s" % (ref, kinds.get(ref, "")),
-                                      use_container_width=True)
+                                      width="stretch")
             with st.chat_message("assistant"):
                 # 마크다운은 단일 개행을 무시한다. 거래명세서가 한 줄로 붙지 않게 한다.
                 st.markdown(h["bot"].replace("\n", "  \n"))
@@ -328,7 +328,7 @@ with tab_chat:
 
         st.divider()
         if quote["rows"]:
-            st.dataframe(pd.DataFrame(quote["rows"]), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(quote["rows"]), width="stretch", hide_index=True)
             st.markdown("소계 **%s원** + 배송비 **%s원** = 합계 **%s**" % (
                 f"{quote['subtotal']:,}", f"{quote['shipping']:,}",
                 f"{quote['total']:,}원" if quote["total"] is not None else "확정 차단"))
@@ -338,7 +338,7 @@ with tab_chat:
         # 대화는 자연스럽게 끝나므로 LLM 은 종료를 알지 못한다. 테스터가 직접 끊는다.
         st.divider()
         if not ss.ended:
-            if st.button("🧾 상담 완료 — 주문서 확정", type="primary", use_container_width=True,
+            if st.button("🧾 상담 완료 — 주문서 확정", type="primary", width="stretch",
                          disabled=not ss.history):
                 # 우편번호 검증은 대화 중에 하지 않는다. 확정 시점에 한 번만 조회하고
                 # 실패하면 주문서에 플래그로 남긴다.
@@ -361,7 +361,7 @@ with tab_chat:
                 st.write(h["diff"] or "변화 없음")
                 st.caption("자동 감지")
                 if h["detect"]:
-                    st.dataframe(pd.DataFrame(h["detect"]), use_container_width=True,
+                    st.dataframe(pd.DataFrame(h["detect"]), width="stretch",
                                  hide_index=True)
                 else:
                     st.write("없음")
@@ -396,7 +396,7 @@ with tab_verdict:
         c1, c2 = st.columns([2, 1])
         with c1:
             if quote["rows"]:
-                st.dataframe(pd.DataFrame(quote["rows"]), use_container_width=True,
+                st.dataframe(pd.DataFrame(quote["rows"]), width="stretch",
                              hide_index=True)
             else:
                 st.caption("품목 없음")
@@ -606,7 +606,7 @@ with tab_report:
             ok = sum(1 for r in recs if r["verdicts"][key]["verdict"] == "통과")
             rows.append({"항목": label, "통과": ok, "실패": len(recs) - ok,
                          "성공률": "%.0f%%" % (100 * ok / len(recs))})
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
         st.divider()
         st.markdown("### 입력 유형별 성공률")
@@ -622,7 +622,7 @@ with tab_report:
                               "통과": ok, "실패": len(sub) - ok,
                               "성공률": "%.0f%%" % (100 * ok / len(sub))})
         if cross:
-            st.dataframe(pd.DataFrame(cross), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(cross), width="stretch", hide_index=True)
         else:
             st.caption("데이터 없음")
 
@@ -639,7 +639,7 @@ with tab_report:
             if causes:
                 st.dataframe(pd.DataFrame(
                     [{"원인": k, "건수": v} for k, v in sorted(causes.items(), key=lambda x: -x[1])]),
-                    use_container_width=True, hide_index=True)
+                    width="stretch", hide_index=True)
             else:
                 st.caption("실패 없음")
 
@@ -656,7 +656,7 @@ with tab_report:
                 mrows.append({"모드": md, "대화": len(sub),
                               "전체 성공률": "%.0f%%" % (100 * ok / total)})
             if mrows:
-                st.dataframe(pd.DataFrame(mrows), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(mrows), width="stretch", hide_index=True)
             else:
                 st.caption("데이터 없음")
 
@@ -684,7 +684,7 @@ with tab_data:
     with st.expander("지침 DB", expanded=False):
         for w in P.validate():
             st.warning(w)
-        st.dataframe(P.summary(), use_container_width=True, hide_index=True)
+        st.dataframe(P.summary(), width="stretch", hide_index=True)
 
     with st.expander("유사어 충돌 — AMBIGUOUS_ALIAS 가 떠야 할 지점", expanded=False):
         syn, master = data["synonyms"], data["master_products"]
@@ -695,6 +695,6 @@ with tab_data:
         if len(collide):
             st.dataframe(pd.DataFrame([
                 {"표현": a, "걸리는 상품": " ↔ ".join("%s %s" % (c, name_of.get(c, "")) for c in cs)}
-                for a, cs in collide.items()]), use_container_width=True, hide_index=True)
+                for a, cs in collide.items()]), width="stretch", hide_index=True)
         else:
             st.write("없음")

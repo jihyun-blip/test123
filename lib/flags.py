@@ -12,12 +12,21 @@
 import re
 
 from . import matching as M
-from . import reply as R
 from . import units as U
+
+# 지침의 REQUIRED_FIELDS 를 상태 필드로 옮기는 표.
+# reply 에도 같은 표가 있지만 여기서 그 모듈을 불러오면 순환 참조가 되고,
+# Streamlit 이 모듈을 다시 읽을 때 임포트가 통째로 깨진다.
+_FIELD_OF = {"수령인": "receiver", "전화": "phone", "주소": "address_base"}
 
 
 def missing_required_any(state, policies):
-    return bool(R.missing_required(state, policies))
+    raw = str(policies.get("REQUIRED_FIELDS", "수령인,전화,주소") or "수령인,전화,주소")
+    for token in raw.split(","):
+        attr = _FIELD_OF.get(token.strip())
+        if attr and not getattr(state, attr, None):
+            return True
+    return False
 
 
 class Flag:
