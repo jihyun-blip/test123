@@ -11,9 +11,15 @@
 코드는 기존 값을 유지한다. 빈 문자열을 미언급의 표현으로 쓰지 않는다.
 """
 import copy
+import re
 
 from . import matching as M
 from . import units as U
+
+
+# '1개씩', '2', '3kg' 처럼 수량만 있는 발화. 상품명으로 오인하면 없는 품목을 되묻게 된다.
+_QTY_ONLY = re.compile(
+    r"^\s*([0-9]+(?:\.[0-9]+)?)\s*(개|kg|g|키로|킬로|그램|근|박스|팩|봉|봉지|마리|줄|세트|통)?\s*(씩)?\s*$")
 
 
 class Field:
@@ -146,9 +152,35 @@ class OrderState:
                 return l
         return None
 
+    def _fill_quantities(self, qty, unit, each):
+        """수량 표현만 온 경우 비어 있는 줄에 채운다. 반환값은 처리했는지 여부.
+
+        '1개씩' 같은 답을 상품명으로 잡으면 없는 품목을 되묻는 무한 루프가 된다."""
+        blanks = [l for l in self.lines if l.quantity is None]
+        if not blanks:
+            return False
+        targets = blanks if (each or len(blanks) == 1) else []
+        if not targets:
+            # 여러 줄이 비었는데 '씩' 도 없으면 어느 쪽인지 알 수 없다. 되물어야 한다.
+            return True
+        for l in targets:
+            l.quantity = qty
+            if unit:
+                l.unit_expr = unit
+        return True
+
     def _apply_op(self, op, turn, catalog=None, policies=None):
         act = (op.get("op") or "add").lower()
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
+
+        # 수량 표현만 있는 발화는 상품명이 아니다
+        m = _QTY_ONLY.match(hint)
+        if m and not (op.get("label_code") or "").strip():
+            qty = float(m.group(1))
+            qty = int(qty) if qty == int(qty) else qty
+            if self._fill_quantities(qty, m.group(2) or op.get("unit_expr") or "",
+                                     bool(m.group(3))):
+                return
 
         if act == "remove":
             target = self._find(hint, catalog, policies)
