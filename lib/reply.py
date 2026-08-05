@@ -78,17 +78,9 @@ def missing_required(state, policies):
 
 
 def build(state, quote, catalog, policies, history):
-    """반환값은 (고정 문장, 종류).
-
-    인사는 봇의 첫 발화에 무조건 붙인다. 거래명세서에 묶어두면
-    되물음으로 대화가 시작됐을 때 두 번째 발화에서 뒤늦게 인사하게 된다.
-    """
-    body, kind = _body(state, quote, catalog, policies)
-
-    if not history:
-        body = GREETING + ("\n" + body if body else "")
-
-    return body, kind
+    """반환값은 (고정 문장, 종류). 인사는 여기서 붙이지 않는다.
+    잡담 답변이 앞에 오는 경우가 있어, 조립이 끝난 뒤 맨 앞에 붙여야 한다."""
+    return _body(state, quote, catalog, policies)
 
 
 def stage(state, quote, catalog, policies):

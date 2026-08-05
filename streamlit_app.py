@@ -237,10 +237,19 @@ with tab_chat:
             if fb:
                 fixed = "\n\n".join(x for x in (fixed, fb) if x)
 
+        # 아직 아무것도 못 받은 단계의 코드 문장은 "무엇을 찾으시냐"는 일반적인 물음이다.
+        # LLM 이 이미 답하며 물었다면 같은 질문을 두 번 하는 셈이라 붙이지 않는다.
+        if kind == "order_ask" and tail:
+            fixed = ""
+
         # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
         # 흐름을 되돌리는 코드 문장이 뒤에 붙어야 자연스럽다.
         order = (tail, fixed) if (digression and tail) else (fixed, tail)
         bot = "\n\n".join(x for x in order if x) or "(응답 없음)"
+
+        # 인사는 봇의 첫 발화 맨 앞에. 무엇을 말하든 그 위에 온다.
+        if not ss.history:
+            bot = RP.GREETING + "\n" + bot
 
         fl = FL.evaluate(ss.state, quote, CAT, P, out, mode)
         prev_asked = bool(ss.history and "?" in (ss.history[-1]["bot"] or ""))
