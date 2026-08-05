@@ -139,6 +139,24 @@ def stage(state, quote, catalog, policies):
         state.invoice_sig = keep
 
 
+# 고객이 물음표 없이 묻는 일이 잦아, 어미도 같이 본다.
+_QUESTION_TAIL = re.compile(
+    r"(없나요|없어요|없을까요|있나요|있을까요|되나요|될까요|맞나요|"
+    r"어때요|어떤가요|뭐예요|뭔가요|무엇인가요|알려주세요|궁금)")
+
+
+def asked_question(text):
+    """고객이 이번 발화에서 무언가를 물었는가.
+
+    intent 만 믿으면 안 된다. '삼겹살 맞아요. 메기랑 비슷한 거 없어요?' 처럼
+    답과 질문이 한 문장에 섞이면 모델은 order 로만 분류하고, 그러면 질문에 대한
+    답이 조립 과정에서 통째로 버려진다. 고객 말을 무시하는 봇이 되는 자리다."""
+    t = str(text or "").strip()
+    if not t:
+        return False
+    return "?" in t or bool(_QUESTION_TAIL.search(t))
+
+
 def _asked_before(history, phrase):
     return any(phrase in (h.get("bot") or "") for h in (history or []))
 

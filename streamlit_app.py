@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.21"
+APP_VERSION = "2026-08-05.22"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -301,7 +301,9 @@ with tab_chat:
 
         # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.
         # 지침의 SMALLTALK 이 짧은 잡담을 허용하고, SMALLTALK_RETURN 이 복귀를 요구한다.
-        digression = out.get("intent") in ("smalltalk", "question", "complaint")
+        # intent 만 보면 답과 질문이 섞인 발화에서 질문을 놓친다. 고객이 친 문장도 같이 본다.
+        digression = (out.get("intent") in ("smalltalk", "question", "complaint")
+                      or RP.asked_question(prompt))
 
         # 코드가 품목을 되묻는 중이면 LLM 의 덧붙임을 버린다.
         # 한 턴에 질문이 둘이면 고객이 무엇에 답해야 할지 모르고,
