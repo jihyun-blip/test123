@@ -229,8 +229,31 @@ def parse(raw):
     return None
 
 
-def call(api_key, model, system, user, images=None):
-    """반환값은 (출력 dict, 원본 텍스트, 사용량 dict)."""
+RETRYABLE = ("503", "429", "unavailable", "high demand", "overloaded",
+             "resource_exhausted", "deadline")
+
+
+def call(api_key, model, system, user, images=None, attempts=3):
+    """반환값은 (출력 dict, 원본 텍스트, 사용량 dict).
+
+    503 UNAVAILABLE 은 모델 쪽 일시 과부하라 잠시 뒤 다시 부르면 대개 통과한다.
+    한 번 실패했다고 목 모드로 떨어뜨리면 관찰이 끊긴다."""
+    import time as _t
+
+    last = None
+    for i in range(attempts):
+        try:
+            return _call_once(api_key, model, system, user, images)
+        except Exception as e:
+            last = e
+            msg = str(e).lower()
+            if i == attempts - 1 or not any(k in msg for k in RETRYABLE):
+                raise
+            _t.sleep(1.5 * (i + 1))
+    raise last
+
+
+def _call_once(api_key, model, system, user, images=None):
     if not api_key:
         return None, "", {}
 

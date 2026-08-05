@@ -45,6 +45,7 @@ def init():
     ss.setdefault("conv_no", 1)
     ss.setdefault("started_at", now())
     ss.setdefault("log_msgs", [])
+    ss.setdefault("pending", None)   # 화면에 먼저 띄우고 나서 처리할 발화
 
 
 def now():
@@ -58,6 +59,7 @@ def reset_conversation():
     ss.images = []
     ss.ended = False
     ss.started_at = now()
+    ss.pending = None
 
 
 init()
@@ -124,20 +126,34 @@ with tab_chat:
                         with st.expander("모델이 실제로 돌려준 원문"):
                             st.code(h["raw"][:3000])
 
+        # 처리 전이라도 고객 발화는 즉시 보여준다. 전송됐는지 몰라 다시 누르는 일을 막는다.
+        if ss.pending:
+            with st.chat_message("user"):
+                st.write(ss.pending["user"])
+                if ss.pending["imgs"]:
+                    st.caption("첨부: " + ", ".join(i["ref"] for i in ss.pending["imgs"]))
+            with st.chat_message("assistant"):
+                st.caption("답변 생성 중…")
+
         up, prompt = None, None
-        if not ss.ended:
+        if not ss.ended and not ss.pending:
             up = st.file_uploader("이미지 첨부 (여러 장 가능)", type=["png", "jpg", "jpeg", "webp"],
                                   accept_multiple_files=True, key="up_%d" % len(ss.history))
             prompt = st.chat_input("고객 발화를 입력하세요")
 
     if prompt:
-        turn = len(ss.history) + 1
-
         new_imgs = []
         for f in up or []:
             ref = "img_%d" % (len(ss.images) + len(new_imgs) + 1)
             new_imgs.append({"ref": ref, "name": f.name,
                              "bytes": f.getvalue(), "mime": f.type or "image/jpeg"})
+        ss.pending = {"user": prompt, "imgs": new_imgs}
+        st.rerun()
+
+    if ss.pending:
+        prompt = ss.pending["user"]
+        new_imgs = ss.pending["imgs"]
+        turn = len(ss.history) + 1
         ss.images.extend(new_imgs)
 
         cand = LLM.candidates_for(prompt, CAT, mode)
@@ -230,6 +246,7 @@ with tab_chat:
             "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
             "at": now(), "latency_ms": latency_ms, "addr_api": dict(ss.state.addr_api or {}),
         })
+        ss.pending = None
         st.rerun()
 
     # ---------------------------------------------------------- 주문 현황
