@@ -13,6 +13,7 @@ import re
 
 from . import matching as M
 from . import reply as R
+from . import units as U
 
 
 def missing_required_any(state, policies):
@@ -63,6 +64,14 @@ def evaluate(state, quote, catalog, policies, out, mode):
             add("PRODUCT_NOT_FOUND", "'%s' 을(를) DB에서 찾지 못함 (%s)" % (line.key, m.rule))
         elif m.status == M.CONFLICT:
             add("PRODUCT_SIGNAL_CONFLICT", m.note)
+
+    for line in state.lines:
+        code = line.match.code if (line.match and line.match.status == M.CONFIRMED) else None
+        pack = catalog.items.get(code, {}).get("pack_unit", "") if code else ""
+        if U.rounded_up(line.quantity, line.unit_expr, pack):
+            add("UNIT_ROUNDED_UP",
+                "'%s%s' 요청 → %s 기준 %d개로 올림. 요청량과 실제 발송량이 다름"
+                % (line.quantity, line.unit_expr, pack, line.packs or 0))
 
     if quote["blocked"]:
         missing = [r["표현"] for r in quote["rows"] if r["단가"] is None]

@@ -13,6 +13,7 @@
 import copy
 
 from . import matching as M
+from . import units as U
 
 
 class Field:
@@ -68,6 +69,8 @@ class Line:
         self.rejected = False   # 고객이 이 품목이 아니라고 함
         self.chosen = None      # 후보 중 고객이 고른 item_code
         self.alternatives = []  # 되물을 대체 후보
+        self.packs = None       # 무게 표현을 환산한 포장 개수
+        self.unit_note = None   # '요청 2kg' 처럼 근거를 남긴다
 
     @property
     def key(self):
@@ -197,17 +200,26 @@ class OrderState:
         for line in self.lines:
             confirmed = line.match and line.match.status == M.CONFIRMED and not line.rejected
             code = line.match.code if confirmed else None
+            pack = catalog.items.get(code, {}).get("pack_unit", "") if code else ""
+
+            # 고객이 무게로 말했으면 포장 개수로 환산한다. "2키로"를 2개로 쓰면
+            # 포장단위가 500g 인 상품에서 절반만 나간다.
+            qty, note = U.convert(line.quantity, line.unit_expr, pack)
+            line.packs = qty
+            line.unit_note = note
+
             unit = catalog.price(code) if code else None
-            amount = unit * line.quantity if (unit is not None and line.quantity) else None
+            amount = unit * qty if (unit is not None and qty) else None
             if amount is None:
                 blocked = True
             else:
                 subtotal += amount
             rows.append({
                 "표현": line.key,
-                "포장단위": (catalog.items.get(code, {}).get("pack_unit", "") if code else ""),
+                "포장단위": pack,
                 "매칭": catalog.display(code) if code else (line.match.status if line.match else "-"),
-                "수량": line.quantity,
+                "수량": qty,
+                "요청": note or "",
                 "단가": unit,
                 "소계": amount,
                 "근거": line.origin,

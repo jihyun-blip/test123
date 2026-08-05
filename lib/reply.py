@@ -246,7 +246,12 @@ def _invoice_text(quote, policies):
         # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
         pack = (r.get("포장단위") or "").strip()
         name = "%s %s" % (r["매칭"], pack) if pack else r["매칭"]
-        out.append("%s %d개 %s" % (name, r["수량"], won(r["소계"])))
+        line = "%s %d개 %s" % (name, r["수량"], won(r["소계"]))
+        note = (r.get("요청") or "").strip()
+        if note and "→" in note:
+            # 요청한 무게와 실제 나가는 양이 다르면 숨기지 않고 적는다
+            line += "  (%s)" % note
+        out.append(line)
 
     threshold = policies.get_int("FREE_SHIPPING_THRESHOLD", 0)
     if quote["shipping"]:
