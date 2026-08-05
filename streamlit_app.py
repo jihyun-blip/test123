@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.20"
+APP_VERSION = "2026-08-05.21"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -290,6 +290,13 @@ with tab_chat:
 
         # 거래명세서·되물음은 코드가 조립한다. LLM 에게 금액을 맡기지 않는다.
         fixed, kind = RP.build(ss.state, quote, CAT, P, ss.history)
+
+        # DB 에 없는 상품은 되묻기를 멈추고 없다고 알린 뒤, 나머지 주문을 계속한다.
+        gone = ss.state.take_unavailable_notice()
+        if gone:
+            names = ", ".join("'%s'" % RP.spoken(g) for g in gone)
+            notice = "%s 아직 취급하지 않는 상품이에요. 나머지로 도와드릴게요." % RP.eun(names)
+            fixed = (notice + "\n" + fixed).strip()
         tail = (out.get("reply") or "").strip() if err is None else ""
 
         # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.

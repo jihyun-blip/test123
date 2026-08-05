@@ -95,13 +95,9 @@ def spoken(expr):
     return cleaned or "말씀하신 상품"
 
 
-def nearest(expr, catalog, top=3, floor=0.3):
-    """DB 에 없는 표현에 대해 가장 가까운 상품을 고른다.
-    후보를 지어내지 않는다. 반드시 실제 DB 행에서만 뽑는다."""
-    scored = sorted(
-        ((difflib.SequenceMatcher(None, expr, catalog.display(c)).ratio(), c)
-         for c in catalog.items), reverse=True)
-    return [c for r, c in scored[:top] if r >= floor]
+def nearest(expr, catalog, top=3):
+    """오타로 보이는 표현에 가장 가까운 실제 상품. 판정 기준은 matching 에 있다."""
+    return M.near_candidates(expr, catalog, top)
 
 
 def invoice_sig(quote):
@@ -150,7 +146,8 @@ def _asked_before(history, phrase):
 def _body(state, quote, catalog, policies, history=None):
     """우선순위가 있다. 모호한 항목이 남아 있는데 거래명세서를 먼저 내밀면
     고객이 잘못된 상품으로 입금한다. 되물음이 항상 앞선다."""
-    lines = state.lines
+    # 취급하지 않는다고 판정된 줄은 되묻지 않는다. 알릴 문구는 앱이 앞에 붙인다.
+    lines = [l for l in state.lines if not l.unavailable]
 
     # ---------------------------------------------------------- 1단계 주문 수집
     for l in lines:

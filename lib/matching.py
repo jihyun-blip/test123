@@ -6,6 +6,7 @@
 LLM 은 이해만 하고 매칭 확정은 코드가 한다.
 """
 import difflib
+import difflib as _difflib
 import re
 
 CONFIRMED = "확정"
@@ -177,3 +178,43 @@ def _match_reduced(hint, catalog, top_n=5):
         return MatchResult(CONFIRMED, scored[0][1], rule="문자열 유사도(축소)")
     return MatchResult(AMBIGUOUS, candidates=[c for _, c in scored], rule="유사도 상위5(축소)",
                        note="최고 점수 %.2f" % scored[0][0])
+
+
+# 오타와 미취급을 가르는 경계.
+# 실측: 섬겹살→삼겹살 0.67, 삽겹살 0.67, 후지슬라이→후지슬라이스 0.91 (오타)
+#       메기 0.29, 소고기 0.50 (DB 에 없는 상품)
+# 0.55 를 넘으면 오타로 보고 후보를 내밀고, 못 넘으면 취급하지 않는 상품이다.
+NEAR_FLOOR = 0.55
+
+
+def near_candidates(expr, catalog, top=3, floor=NEAR_FLOOR):
+    """DB 에 없는 표현과 가장 가까운 실제 상품을 고른다.
+
+    표시명뿐 아니라 유사어까지 본다. 유사어가 더 가까운 경우가 많아서,
+    표시명만 보면 오타를 미취급으로 잘못 판정한다.
+    후보를 지어내지 않는다. 반드시 실제 DB 행에서만 뽑는다."""
+    expr = str(expr or "").strip()
+    if not expr:
+        return []
+
+    best = {}
+    def look(table):
+        for word, codes in table.items():
+            if not word:
+                continue
+            r = _difflib.SequenceMatcher(None, expr, word).ratio()
+            for c in codes:
+                if r > best.get(c, 0):
+                    best[c] = r
+
+    look(catalog.by_canonical)
+    look(catalog.by_synonym)
+    for c in catalog.items:
+        name = catalog.display(c)
+        if name:
+            r = _difflib.SequenceMatcher(None, expr, name).ratio()
+            if r > best.get(c, 0):
+                best[c] = r
+
+    ranked = sorted(best.items(), key=lambda kv: -kv[1])
+    return [c for c, r in ranked[:top] if r >= floor]

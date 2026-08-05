@@ -79,6 +79,9 @@ class Line:
         self.rejected = False   # 고객이 이 품목이 아니라고 함
         self.chosen = None      # 후보 중 고객이 고른 item_code
         self.alternatives = []  # 되물을 대체 후보
+        self.unavailable = False   # DB 에 없어 취급하지 않는다고 판정된 줄
+        self.notice_shown = False  # 미취급 사실을 고객에게 이미 알렸는가
+        self.notfound_turns = 0    # 몇 턴째 못 찾고 있는가
         self.packs = None       # 무게 표현을 환산한 포장 개수
         self.unit_note = None   # '요청 2kg' 처럼 근거를 남긴다
 
@@ -272,6 +275,36 @@ class OrderState:
                 line.alternatives = []
 
         self._merge_same_product()
+        self._mark_unavailable(catalog)
+
+    def _mark_unavailable(self, catalog):
+        """DB 에 없는 표현을 언제까지 되물을지 정한다.
+
+        가까운 상품조차 없으면 오타가 아니라 취급하지 않는 상품이다.
+        그때는 묻지 않고 없다고 말해야 한다. 같은 질문을 반복하는 것은
+        고객에게 아무 정보도 주지 않으면서 대화만 막는다.
+        가까운 상품이 있으면 오타일 수 있으니 한 턴은 되묻되,
+        그래도 안 풀리면 미취급으로 정리하고 나머지 주문을 진행한다."""
+        for line in self.lines:
+            if line.unavailable:
+                continue
+            if not (line.match and line.match.status == M.NOT_FOUND):
+                line.notfound_turns = 0
+                continue
+
+            line.notfound_turns += 1
+            near = M.near_candidates(line.key, catalog)
+            if not near or line.notfound_turns >= 2:
+                line.unavailable = True
+
+    def take_unavailable_notice(self):
+        """아직 고객에게 알리지 않은 미취급 품목의 표현을 돌려준다."""
+        out = []
+        for line in self.lines:
+            if line.unavailable and not line.notice_shown:
+                line.notice_shown = True
+                out.append(line.key)
+        return out
 
     def _merge_same_product(self):
         """같은 상품을 가리키는 줄이 둘 이상이면 하나로 합친다.
@@ -299,6 +332,8 @@ class OrderState:
         rows, subtotal, blocked = [], 0, False
 
         for line in self.lines:
+            if line.unavailable:
+                continue
             confirmed = line.match and line.match.status == M.CONFIRMED and not line.rejected
             code = line.match.code if confirmed else None
             pack = catalog.items.get(code, {}).get("pack_unit", "") if code else ""
