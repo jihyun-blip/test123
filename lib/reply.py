@@ -17,10 +17,7 @@ def won(n):
     return "%s원" % f"{int(n):,}"
 
 
-def _greeted(history):
-    """이미 인사를 나눈 상태면 인사말을 생략한다."""
-    return any("안녕" in (h.get("bot") or "") or "안녕" in (h.get("user") or "")
-               for h in history)
+GREETING = "안녕하세요 고객님!"
 
 
 def nearest(expr, catalog, top=3, floor=0.3):
@@ -33,11 +30,22 @@ def nearest(expr, catalog, top=3, floor=0.3):
 
 
 def build(state, quote, catalog, policies, history):
-    """반환값은 (고정 문장, 종류). 종류는 관찰·자동감지에서 쓴다.
+    """반환값은 (고정 문장, 종류).
 
-    우선순위가 있다. 모호한 항목이 남아 있는데 거래명세서를 먼저 내밀면
-    고객이 잘못된 상품으로 입금한다. 되물음이 항상 앞선다.
+    인사는 봇의 첫 발화에 무조건 붙인다. 거래명세서에 묶어두면
+    되물음으로 대화가 시작됐을 때 두 번째 발화에서 뒤늦게 인사하게 된다.
     """
+    body, kind = _body(state, quote, catalog, policies)
+
+    if not history:
+        body = GREETING + ("\n" + body if body else "")
+
+    return body, kind
+
+
+def _body(state, quote, catalog, policies):
+    """우선순위가 있다. 모호한 항목이 남아 있는데 거래명세서를 먼저 내밀면
+    고객이 잘못된 상품으로 입금한다. 되물음이 항상 앞선다."""
     lines = state.lines
 
     # 1. 고객이 아니라고 한 품목 — 같은 표현을 공유하는 상품을 후보로 제시
@@ -88,9 +96,6 @@ def build(state, quote, catalog, policies, history):
 
     # 6. 필요한 정보가 다 모였다 — 거래명세서를 조립한다
     out = []
-    if not _greeted(history):
-        out.append("안녕하세요 고객님!")
-
     for r in quote["rows"]:
         # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
         pack = (r.get("포장단위") or "").strip()
