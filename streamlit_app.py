@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.17"
+APP_VERSION = "2026-08-05.18"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -77,7 +77,15 @@ tester = head[0].selectbox("테스터", TESTERS)
 mode_label = head[1].radio("지식 수준", ["전체", "축소"], horizontal=True,
                            help="축소 모드는 외부 개발사가 실제로 갖게 될 수준을 재현합니다")
 mode = "full" if mode_label == "전체" else "reduced"
-model = head[2].selectbox("모델", sheets.secret("MODELS", ["(목 모드)"]))
+MODEL_LIST = sheets.secret("MODELS", ["(목 모드)"])
+model = head[2].selectbox("모델", MODEL_LIST)
+
+def overload_backup(current):
+    """과부하 때 대신 부를 모델. 설정된 목록에서 가장 여유 있는 등급을 고른다."""
+    for m in MODEL_LIST:
+        if m != current and "flash" in str(m).lower():
+            return m
+    return None
 if head[3].button("DB 새로고침", width="stretch"):
     sheets.clear_cache()
     st.rerun()
@@ -127,7 +135,11 @@ with tab_chat:
                 # 마크다운은 단일 개행을 무시한다. 거래명세서가 한 줄로 붙지 않게 한다.
                 st.markdown(h["bot"].replace("\n", "  \n"))
                 if h.get("latency_ms"):
-                    retries = (h.get("usage") or {}).get("retries")
+                    u = h.get("usage") or {}
+                    if u.get("fallback_model"):
+                        st.caption("⚠ %s 과부하 → %s 로 대체 응답"
+                                   % (u["fallback_from"], u["fallback_model"]))
+                    retries = u.get("retries")
                     st.caption("%.1f초%s" % (h["latency_ms"] / 1000,
                                              " · 모델 과부하로 %d회 재시도" % retries if retries else ""))
                 if h.get("error"):
@@ -195,6 +207,18 @@ with tab_chat:
                         usage.get("finish_reason", "?"), len(raw or ""))
             except Exception as e:
                 err = "%s: %s" % (type(e).__name__, e)
+                # 과부하는 Pro·프리뷰에서 특히 잦다. 목 모드로 떨어뜨리면 이해 자체가
+                # 사라지므로, 같은 발화를 Flash 로 한 번 더 보낸다. 어느 모델이
+                # 실제로 답했는지는 아래 fallback_model 로 남겨 비교를 오염시키지 않는다.
+                backup = overload_backup(model)
+                if backup and any(k in str(e).lower() for k in LLM.RETRYABLE):
+                    try:
+                        out, raw, usage = LLM.call(API_KEY, backup, system, user, new_imgs)
+                        usage["fallback_model"] = backup
+                        usage["fallback_from"] = model
+                        err = None
+                    except Exception:
+                        pass
         else:
             err = "GEMINI_API_KEY 가 설정되지 않았습니다"
 
