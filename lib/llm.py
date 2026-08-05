@@ -27,6 +27,9 @@ DEFAULT_PRICE = (0.15, 1.25)
 # 모델별로 사고 끄기 인자를 받는지 한 번만 확인하고 기억한다.
 _NO_THINKING = {}
 
+# 호출마다 새로 만들면 연결을 매번 다시 맺는다.
+_CLIENTS = {}
+
 OUTPUT_CONTRACT = """\
 반드시 아래 JSON 하나만 출력한다. 설명 문장을 덧붙이지 않는다.
 
@@ -68,6 +71,8 @@ OUTPUT_CONTRACT = """\
   "성함을 알려주세요" 뒤의 "모모" 는 receiver 값이고, "몇 개 필요하신가요" 뒤의 "3" 은 수량이다.
   단답이라고 해서 흘려보내지 않는다.
 - 입금증을 먼저 요구하지 않는다. 고객이 보내오면 받았다고만 하고, 요청하는 말은 하지 않는다.
+- 수령인·연락처·주소는 글로 받는 편이 정확하다. 먼저 사진으로 보내라고 권하지 않는다.
+  고객이 사진을 보내오면 읽으면 된다.
 - DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
 
 이미지 규칙:
@@ -232,7 +237,9 @@ def call(api_key, model, system, user, images=None):
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=api_key)
+    client = _CLIENTS.get(api_key)
+    if client is None:
+        client = _CLIENTS[api_key] = genai.Client(api_key=api_key)
 
     contents = []
     for img in images or []:

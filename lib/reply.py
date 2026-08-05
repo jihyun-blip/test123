@@ -180,10 +180,7 @@ def pending(state, policies):
 def fallback_ask(pend):
     """LLM 이 아무것도 묻지 않았을 때만 쓰는 안전망. 흐름이 멈추지 않게 한다."""
     if pend["missing"]:
-        ask = "%s를 알려주시겠어요?" % ", ".join(pend["missing"])
-        if len(pend["missing"]) >= 3:
-            ask += " 주소가 적힌 사진을 보내주셔도 됩니다."
-        return ask
+        return "%s를 알려주시겠어요?" % ", ".join(pend["missing"])
     if pend["detail"]:
         return "동·호수까지 알려주시면 더 정확하게 배송해드릴 수 있어요."
     return ""
