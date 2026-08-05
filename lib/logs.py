@@ -55,7 +55,7 @@ def write(tab, rows):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _fetch(url, token, tab):
-    r = requests.get(url, params={"token": token, "tab": tab}, timeout=30)
+    r = requests.get(url, params={"token": token, "tab": tab}, timeout=90)
     r.raise_for_status()
     data = r.json()
     if not data.get("ok"):
