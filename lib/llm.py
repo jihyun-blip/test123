@@ -346,6 +346,28 @@ def recover_from_images(out, catalog):
     return out
 
 
+LABEL_READ = (
+    "이미지에 인쇄된 상품 라벨코드와 상품명을 읽는다. 라벨코드는 영문 1글자 + 숫자 4자리 "
+    "형태이며 보통 사진 모서리에 있다. 다른 것은 하지 않는다.\n"
+    '출력은 {"items":[{"ref":"img_1","label_code":"A0013","printed_name":null}]} '
+    "형식의 JSON 하나뿐이다. 읽히지 않으면 null 로 둔다."
+)
+
+
+def read_labels(api_key, model, images):
+    """상품 이미지에서 라벨코드만 따로 읽는다.
+
+    1차 호출이 코드를 읽어놓고도 item_ops 에 넣지 않는 일이 있어,
+    품목을 하나도 못 건졌을 때 이 경로로 한 번 더 확인한다."""
+    if not api_key or not images:
+        return []
+    try:
+        out, _, _ = call(api_key, model, LABEL_READ, "라벨코드를 읽어라.", images, attempts=1)
+    except Exception:
+        return []
+    return (out or {}).get("items") or []
+
+
 def repair(s):
     """닫는 괄호가 빠진 채로 끝난 JSON 을 이어 붙인다.
 

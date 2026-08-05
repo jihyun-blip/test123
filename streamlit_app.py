@@ -23,6 +23,9 @@ from lib.order import OrderState
 
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
+# 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
+APP_VERSION = "2026-08-05.09"
+
 TESTERS = ["이지현", "김경민"]
 
 # 테스터가 대화 끝에 통과·실패를 찍는 항목. 이게 이 도구의 핵심 산출물이다.
@@ -91,6 +94,8 @@ CAT = M.Catalog(data["master_products"], data["country_products"], data["synonym
 
 API_KEY = sheets.secret("GEMINI_API_KEY")
 JUSO_KEY = sheets.secret("JUSO_CONFM_KEY")
+
+st.caption("빌드 %s" % APP_VERSION)
 
 tab_report, tab_chat, tab_verdict, tab_data = st.tabs(
     ["📊 보고서", "💬 대화", "✅ 판정", "🗄 데이터"])
@@ -195,6 +200,21 @@ with tab_chat:
 
         # 사진에서 읽은 라벨코드가 item_ops 에 빠져 있으면 코드가 살려낸다
         out = LLM.recover_from_images(out, CAT)
+
+        # 그래도 상품을 하나도 못 건졌는데 상품 사진이 왔다면, 라벨만 따로 읽어본다.
+        # 1차 응답의 구조에 기대지 않는 마지막 경로다.
+        if new_imgs and not any(
+                (o.get("label_code") or o.get("name_hint") or o.get("raw_text"))
+                for o in (out.get("item_ops") or [])):
+            extra = []
+            for it in LLM.read_labels(API_KEY, model, new_imgs):
+                code = LLM._code_of(it.get("label_code") or it.get("printed_name"), CAT)
+                if code:
+                    extra.append({"op": "add", "name_hint": CAT.display(code),
+                                  "label_code": code, "quantity": None,
+                                  "source": "image", "source_ref": it.get("ref")})
+            if extra:
+                out["item_ops"] = extra
 
         # LLM 이 판별한 이미지 종류를 보관한다. 고객은 종류를 알려주지 않는다.
         for meta in out.get("images") or []:
