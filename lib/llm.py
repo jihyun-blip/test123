@@ -259,6 +259,10 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
     if state.lines or state.receiver or state.address_base:
         cur = []
         for l in state.lines:
+            # 취급하지 않는다고 정리한 줄까지 보내면, 모델이 그걸 주문에 남아 있는 것으로 읽고
+            # "삼겹살, 메기, 전지 각각 1개씩" 처럼 없는 상품을 계속 세어 말한다.
+            if l.unavailable:
+                continue
             mark = ""
             if l.rejected:
                 alts = ", ".join("%s=%s" % (c, catalog.display(c)) for c in l.alternatives)

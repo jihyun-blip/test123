@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.25"
+APP_VERSION = "2026-08-05.26"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -283,6 +283,9 @@ with tab_chat:
         each_hint = bool(ss.history and "각각 몇 개씩" in (ss.history[-1]["bot"] or ""))
         diff = ss.state.apply(out, turn, CAT, P, each_hint, prompt)
         ss.state.rematch(CAT, P, mode)
+        # 지난 턴에 물었는데 이번에도 못 받은 항목을 센다. 무한 되물음을 끊는 근거다.
+        if pend_before:
+            ss.state.count_unanswered(pend_before.get("keys") or [])
 
         # 전화번호를 이미지에서 뽑았다면 같은 이미지를 한 번 더 읽어 대조한다.
         # 잘못 읽혀도 형식이 유효하면 어떤 검증에도 걸리지 않기 때문이다.

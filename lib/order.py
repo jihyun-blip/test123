@@ -110,6 +110,18 @@ class OrderState:
         self.images = []         # [{ref, kind, read}] LLM 이 판별한 이미지 종류
         self.payment_proof = None # 입금증 이미지 ref. 받았어도 입금 확인은 사람이 한다
         self.invoice_sig = None  # 마지막으로 보여준 거래명세서의 지문
+        self.done_shown = False  # 마무리 인사를 이미 했는가
+        self.ask_rounds = {}     # 필수 항목별로 몇 턴째 물었는데도 못 받았는가
+
+    def count_unanswered(self, asked_fields):
+        """지난 턴에 물었던 항목이 이번에도 비어 있으면 횟수를 올린다.
+
+        고객이 '없어요' 라고 답해도 값은 여전히 비어 있으므로, 코드는 계속 물어야 할
+        것으로 본다. 그러면 같은 질문이 무한히 반복된다. 몇 번까지 묻고 포기할지는
+        세어 두어야 판단할 수 있다."""
+        for attr in asked_fields or []:
+            if not getattr(self, attr, None):
+                self.ask_rounds[attr] = self.ask_rounds.get(attr, 0) + 1
         self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     # ---------------------------------------------------------------- 누적

@@ -117,8 +117,21 @@ def required_fields(policies):
 
 def missing_required(state, policies):
     """매 턴 다시 계산한다. 고객이 순서와 무관하게 정보를 주더라도
-    이미 받은 것은 묻지 않고 아직 없는 것만 묻기 위해서다."""
-    return [(k, label) for k, label in required_fields(policies) if not getattr(state, k)]
+    이미 받은 것은 묻지 않고 아직 없는 것만 묻기 위해서다.
+
+    다만 고객이 줄 수 없는 정보도 있다. 몇 번을 물어도 못 받으면 묻기를 멈춘다.
+    계속 물으면 대화가 끝나지 않고, 고객은 같은 질문만 듣는다.
+    빠진 채로 남는 것은 플래그로 드러나 상담원이 처리한다."""
+    limit = policies.get_int("ASK_RETRY_LIMIT", 2)
+    return [(k, label) for k, label in required_fields(policies)
+            if not getattr(state, k) and state.ask_rounds.get(k, 0) < limit]
+
+
+def given_up(state, policies):
+    """묻기를 포기한 필수 항목. 상담원이 채워야 하는 목록이다."""
+    limit = policies.get_int("ASK_RETRY_LIMIT", 2)
+    return [label for k, label in required_fields(policies)
+            if not getattr(state, k) and state.ask_rounds.get(k, 0) >= limit]
 
 
 def build(state, quote, catalog, policies, history):
@@ -133,10 +146,12 @@ def stage(state, quote, catalog, policies):
     build() 는 거래명세서를 보여줬다는 표시를 남기므로,
     LLM 호출 전에 단계만 알고 싶을 때 이 함수를 쓴다."""
     keep = state.invoice_sig
+    keep_done = state.done_shown
     try:
         return _body(state, quote, catalog, policies)[1]
     finally:
         state.invoice_sig = keep
+        state.done_shown = keep_done
 
 
 # 고객이 물음표 없이 묻는 일이 잦아, 어미도 같이 본다.
@@ -238,7 +253,13 @@ def _body(state, quote, catalog, policies, history=None):
 
     pend = pending(state, policies)
     if not (pend["missing"] or pend["detail"]):
-        out.append("주문 감사합니다! 확인하는 대로 바로 보내드릴게요.")
+        # 마무리 인사는 한 번이면 된다. 매 턴 반복하면 고객이 같은 말을 계속 듣는다.
+        if not state.done_shown:
+            state.done_shown = True
+            gave = given_up(state, policies)
+            if gave:
+                out.append("%s 확인이 어려워 담당자가 따로 확인드릴게요." % eun(", ".join(gave)))
+            out.append("주문 감사합니다! 확인하는 대로 바로 보내드릴게요.")
         return ("\n\n".join(out), "complete")
 
     return ("\n\n".join(out), "invoice" if show_invoice else "collecting")
@@ -252,7 +273,9 @@ def pending(state, policies):
     want_detail = (not state.address_detail) and detail_rule != "생략" and bool(state.address_base)
 
     # 입금증은 먼저 요구하지 않는다. 고객이 보내면 받아서 검수에 올릴 뿐이다.
-    return {"missing": missing, "detail": want_detail, "detail_rule": detail_rule}
+    return {"missing": missing, "detail": want_detail, "detail_rule": detail_rule,
+            # 이번 턴에 무엇을 물었는지 앱이 세어 둘 수 있게 상태 필드명도 같이 넘긴다
+            "keys": [k for k, _ in missing_required(state, policies)]}
 
 
 def fallback_ask(pend):
