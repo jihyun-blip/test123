@@ -35,7 +35,9 @@ def write(tab, rows):
         r = requests.post(
             sheets.secret("APPS_SCRIPT_URL"),
             json={"token": sheets.secret("APPS_SCRIPT_TOKEN"), "tab": tab, "rows": rows},
-            timeout=20,
+            # Apps Script 는 LockService 로 직렬화되어 느릴 때가 있다. 여기서 먼저 끊으면
+            # 시트에는 기록됐는데 실패로 보여, 테스터가 다시 눌러 같은 대화가 두 번 쌓인다.
+            timeout=60,
         )
         r.raise_for_status()
         data = r.json()

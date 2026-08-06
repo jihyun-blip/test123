@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.24"
+APP_VERSION = "2026-08-05.25"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -586,8 +586,14 @@ def records_from_sheet():
     if e1 or e2 or convs.empty:
         return [], (e1 or e2)
 
+    # 저장이 시간 초과로 실패한 것처럼 보이면 테스터가 다시 누른다. 그때 Apps Script 쪽에는
+    # 이미 기록돼 있어 같은 대화가 여러 줄 쌓인다. 그대로 세면 대화 수·토큰·비용이 전부
+    # 부풀려지므로, 읽을 때 대화 하나당 마지막 행만 남긴다.
+    convs = convs.drop_duplicates(subset=["conversation_id"], keep="last")
+
     by_conv = {}
     if not fvs.empty:
+        fvs = fvs.drop_duplicates(subset=["conversation_id", "field_type"], keep="last")
         for r in fvs.to_dict("records"):
             by_conv.setdefault(r.get("conversation_id"), []).append(r)
 
