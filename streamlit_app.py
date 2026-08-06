@@ -25,7 +25,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.23"
+APP_VERSION = "2026-08-05.24"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -103,6 +103,14 @@ data, origins, errors = sheets.load_all()
 if errors:
     for name, err in errors.items():
         st.error("**%s** 를 읽지 못했습니다\n\n```\n%s\n```" % (name, err))
+        # 401/403 은 앱이나 버튼 문제가 아니라 시트 공유 설정이 풀린 것이다.
+        # 안내가 없으면 테스터가 자기가 무언가를 망가뜨렸다고 생각한다.
+        if "401" in str(err) or "403" in str(err):
+            st.warning(
+                "시트 공유 설정이 풀렸습니다. **DB 새로고침 버튼 때문이 아닙니다.**\n\n"
+                "해당 구글 시트 → **공유** → **일반 액세스** 를 "
+                "`링크가 있는 모든 사용자` · **뷰어** 로 바꾼 뒤 "
+                "**DB 새로고침** 을 눌러주세요.")
     st.stop()
 
 P = pol.Policies(data["bot_policies"])
