@@ -26,7 +26,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.30"
+APP_VERSION = "2026-08-05.31"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -310,6 +310,16 @@ with tab_chat:
             notice = "%s 아직 취급하지 않는 상품이에요. 나머지로 도와드릴게요." % RP.eun(names)
             fixed = (notice + "\n" + fixed).strip()
         tail = (out.get("reply") or "").strip() if err is None else ""
+
+        # 고객이 주소나 연락처를 먼저 준 경우, 받았다는 말 없이 다음 질문만 하면
+        # 보냈는지 아닌지를 알 수 없어 같은 것을 또 보내게 된다.
+        # 이번 턴에 새로 채워진 것만 짚는다. 이미 말한 것을 매 턴 반복하지 않기 위해서다.
+        got = [label for label, f in (("성함", ss.state.receiver),
+                                      ("연락처", ss.state.phone),
+                                      ("주소", ss.state.address_base))
+               if f and f.turn == turn]
+        if got and not tail:
+            fixed = ("%s 확인했습니다." % RP.eul(", ".join(got)) + "\n" + fixed).strip()
 
         # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.
         # 지침의 SMALLTALK 이 짧은 잡담을 허용하고, SMALLTALK_RETURN 이 복귀를 요구한다.

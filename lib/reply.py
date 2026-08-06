@@ -216,7 +216,9 @@ def _body(state, quote, catalog, policies, history=None):
     if not lines:
         # 이미 사진을 보낸 고객에게 사진을 보내라고 하면 대화가 막힌다.
         # 못 읽었다는 사실을 밝히고 다른 길을 제시해야 한다.
-        if state.images:
+        # 다만 주소 사진을 보낸 고객에게 "상품을 못 찾았다"고 하면 엉뚱한 말이 된다.
+        # 상품 사진을 보냈는데 못 읽은 경우에만 그렇게 말한다.
+        if any(i.get("kind") == "product" for i in state.images or []):
             return ("보내주신 사진에서 상품을 확인하지 못했어요. "
                     "상품명을 알려주시거나 라벨이 보이게 다시 찍어주시면 담아드릴게요.",
                     "order_ask")
