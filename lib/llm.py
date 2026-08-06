@@ -142,6 +142,8 @@ OUTPUT_CONTRACT = """\
 - 수령인·연락처·주소는 글로 받는 편이 정확하다. 먼저 사진으로 보내라고 권하지 않는다.
   고객이 사진을 보내오면 읽으면 된다.
 - DB 에 없는 사실(원산지·성분·유통기한·보관법)은 추측하지 않고 missing_info 에 기록한다.
+- 대화에 나오지 않은 개념을 만들지 않는다. 고객이 선물이라고 하지 않았으면 선물이 아니고,
+  묻지 않은 옵션을 있는 것처럼 말하지 않는다. 아는 것만 말한다.
 
 이미지 규칙:
 - 고객은 이미지의 종류를 알려주지 않는다. 각 이미지가 무엇인지 스스로 판별해 images 에 적는다.
@@ -175,10 +177,14 @@ def cost_usd(model, tin, tout):
     return (tin / 1_000_000) * pin + (tout / 1_000_000) * pout
 
 
-def candidates_for(text, catalog, mode, limit=8):
-    """상품 마스터 전체를 프롬프트에 붓지 않는다. 검색으로 좁힌 것만 넘긴다."""
+def candidates_for(text, catalog, mode, limit=8, always=None):
+    """상품 마스터 전체를 프롬프트에 붓지 않는다. 검색으로 좁힌 것만 넘긴다.
+
+    always 는 이미 주문에 담긴 상품의 코드다. 고객이 이번 턴에 상품명을 말하지
+    않으면 검색으로는 잡히지 않아, 모델이 그 상품의 가격도 존재 여부도 모르는 채
+    답하게 된다. 그때 "취급하지 않는 상품" 같은 말을 지어낸다."""
     text = str(text or "")
-    hits = []
+    hits = list(always or [])
 
     if mode == "full":
         for expr, codes in list(catalog.by_synonym.items()) + list(catalog.by_canonical.items()):
@@ -196,7 +202,11 @@ def candidates_for(text, catalog, mode, limit=8):
     scored = sorted(
         ((difflib.SequenceMatcher(None, text, catalog.display(c)).ratio(), c) for c in catalog.items),
         reverse=True)[:5]
-    return [c for _, c in scored]
+    out = list(always or [])
+    for _, c in scored:
+        if c not in out:
+            out.append(c)
+    return out[:limit]
 
 
 def build_system(policies, mode):

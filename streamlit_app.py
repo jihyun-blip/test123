@@ -26,7 +26,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.33"
+APP_VERSION = "2026-08-05.34"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -194,7 +194,9 @@ with tab_chat:
         turn = len(ss.history) + 1
         ss.images.extend(new_imgs)
 
-        cand = LLM.candidates_for(prompt, CAT, mode)
+        in_order = [l.match.code for l in ss.state.lines
+                    if l.match and l.match.code and not l.unavailable]
+        cand = LLM.candidates_for(prompt, CAT, mode, always=in_order)
         system = LLM.build_system(P, mode)
 
         # 1차 호출 — 발화에서 구조화된 데이터만 뽑는다
@@ -285,7 +287,9 @@ with tab_chat:
         diff = ss.state.apply(out, turn, CAT, P, each_hint, prompt)
         ss.state.rematch(CAT, P, mode)
         # 지난 턴에 물었는데 이번에도 못 받은 항목을 센다. 무한 되물음을 끊는 근거다.
-        if pend_before:
+        # 고객이 되묻거나 딴 얘기를 한 턴은 답할 기회가 없었던 것이다. 세지 않는다.
+        # 그렇지 않으면 두어 번 대화가 오가기만 해도 묻기를 포기해버린다.
+        if pend_before and not RP.asked_question(prompt):
             ss.state.count_unanswered(pend_before.get("keys") or [])
 
         # 전화번호를 이미지에서 뽑았다면 같은 이미지를 한 번 더 읽어 대조한다.
