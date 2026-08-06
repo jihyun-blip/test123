@@ -112,6 +112,7 @@ class OrderState:
         self.invoice_sig = None  # 마지막으로 보여준 거래명세서의 지문
         self.done_shown = False  # 마무리 인사를 이미 했는가
         self.ask_rounds = {}     # 필수 항목별로 몇 턴째 물었는데도 못 받았는가
+        self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     def count_unanswered(self, asked_fields):
         """지난 턴에 물었던 항목이 이번에도 비어 있으면 횟수를 올린다.
@@ -122,7 +123,6 @@ class OrderState:
         for attr in asked_fields or []:
             if not getattr(self, attr, None):
                 self.ask_rounds[attr] = self.ask_rounds.get(attr, 0) + 1
-        self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
 
     # ---------------------------------------------------------------- 누적
     def apply(self, out, turn, catalog=None, policies=None, each_hint=False, user_text=""):
