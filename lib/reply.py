@@ -214,6 +214,12 @@ def _body(state, quote, catalog, policies, history=None):
                         % i_ga("'%s'" % spoken(l.key)), "notfound_ask")
 
     if not lines:
+        # 이미 사진을 보낸 고객에게 사진을 보내라고 하면 대화가 막힌다.
+        # 못 읽었다는 사실을 밝히고 다른 길을 제시해야 한다.
+        if state.images:
+            return ("보내주신 사진에서 상품을 확인하지 못했어요. "
+                    "상품명을 알려주시거나 라벨이 보이게 다시 찍어주시면 담아드릴게요.",
+                    "order_ask")
         return ("어떤 상품 찾으세요? 상품명을 말씀해주시거나 사진을 보내주시면 담아드릴게요.",
                 "order_ask")
 

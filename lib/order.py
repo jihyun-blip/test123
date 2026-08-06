@@ -62,14 +62,28 @@ class Field:
         return bool(self.value)
 
 
+# "이거 주세요" 처럼 사진이나 앞말을 가리키는 표현. 상품명이 아니다.
+_DEMONSTRATIVE = {"이거", "이것", "요거", "요것", "저거", "저것", "그거", "그것",
+                  "이상품", "그상품", "저상품", "이제품", "그제품", "사진", "이사진",
+                  "위에것", "방금것", "동일상품", "같은거", "같은것"}
+
+
+def _is_demonstrative(text):
+    t = re.sub(r"[\s의]", "", str(text or "")).strip()
+    return t in _DEMONSTRATIVE
+
+
 class Line:
     """주문 품목 한 줄. 고객 표현과 매칭 결과를 분리해서 들고 있는다.
     표현을 정확히 뽑았는데 엉뚱한 상품에 붙는 경우와,
     표현을 잘못 읽었는데 우연히 맞는 상품으로 가는 경우는 대응이 다르다."""
 
-    def __init__(self, raw_text, name_hint, quantity, unit_expr, source, source_ref, turn):
+    def __init__(self, raw_text, name_hint, quantity, unit_expr, source, source_ref, turn,
+                 label_code=""):
         self.raw_text = raw_text
         self.name_hint = name_hint
+        # 사진에서 읽은 라벨코드. 이름보다 확실한 신호이므로 버리지 않고 들고 간다.
+        self.label_code = label_code
         self.quantity = quantity   # None 이면 고객이 수량을 말하지 않은 것
         self.unit_expr = unit_expr or ""
         self.source = source
@@ -205,6 +219,12 @@ class OrderState:
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
         label = (op.get("label_code") or "").strip()
 
+        # "이거 구매하고싶어요" 처럼 사진을 가리키는 말은 상품명이 아니다.
+        # 그대로 두면 '이거' 라는 품목이 만들어지고, DB 에 없으니 취급하지 않는 상품으로
+        # 판정되어 정작 사진에서 읽은 상품이 묻힌다.
+        if _is_demonstrative(hint):
+            hint = ""
+
         # 무엇을 가리키는지 전혀 없는 항목은 어떤 op 든 버린다. 빈 줄이 만들어지면
         # "'말씀하신 상품'이 어떤 상품인지…" 처럼 실체 없는 되물음이 나간다.
         # add 만 막으면 op="update" 같은 빈 항목이 아래로 흘러 새 줄을 만든다.
@@ -252,6 +272,8 @@ class OrderState:
             return
 
         if existing:
+            if label and not existing.label_code:
+                existing.label_code = label
             # 같은 표현이 다시 나오면 수량을 더한다
             q = op.get("quantity")
             if q is not None:
@@ -266,6 +288,7 @@ class OrderState:
             source=op.get("source", "text"),
             source_ref=op.get("source_ref"),
             turn=turn,
+            label_code=label,
         ))
 
     # ---------------------------------------------------------------- 매칭
@@ -278,7 +301,8 @@ class OrderState:
                 continue
 
             line.match = M.match(
-                {"name_hint": line.name_hint, "raw_text": line.raw_text}, catalog, policies, mode)
+                {"name_hint": line.name_hint, "raw_text": line.raw_text,
+                 "label_code": line.label_code}, catalog, policies, mode)
 
             # 확정됐지만 고객이 아니라고 한 건은, 같은 표현을 공유하는 상품을 후보로 제시한다
             if line.rejected and line.match.code:
