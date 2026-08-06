@@ -12,6 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from lib import flags as FL
+from lib import handoff as HO
 from lib import images as IMG
 from lib import juso
 from lib import logs as LOG
@@ -25,7 +26,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.26"
+APP_VERSION = "2026-08-05.27"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -476,6 +477,20 @@ with tab_verdict:
                 "합계": f"{quote['total']:,}원" if quote["total"] is not None else "확정 차단",
             })
 
+        hand = HO.build(state, quote, CAT, P, ss.history)
+        st.markdown("### 상담원 인계 메모")
+        if hand:
+            st.caption("코드가 상태와 플래그에서 뽑은 것입니다. 상담원이 확정 전에 확인할 목록입니다.")
+            groups = {}
+            for kind_, text in hand:
+                groups.setdefault(kind_, []).append(text)
+            for kind_, texts in groups.items():
+                st.markdown("**%s**" % kind_)
+                for t in texts:
+                    st.markdown("- %s" % t)
+        else:
+            st.success("확인할 사항이 없습니다. 그대로 확정하셔도 됩니다.")
+
         st.divider()
         st.markdown("### 항목별 판정")
         st.caption("주문서가 자동으로 제대로 입력되었는지 항목별로 찍어주세요. "
@@ -543,7 +558,7 @@ with tab_verdict:
                 try:
                     bundle = LOG.build_rows(
                         conv_id, tester, mode_label, model, state, quote, ss.history,
-                        verdicts, sources, note,
+                        verdicts, sources, note, handoff=HO.as_text(hand),
                         policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
                         started_at=ss.started_at, ended_at=now(),
                         flag_settings={k: r.get("값") for k, r in P.flags.items()})

@@ -98,7 +98,7 @@ def _avg(values):
 
 def build_rows(conv_id, tester, mode_label, model, state, quote, history,
                verdicts, sources, note, policy_version, started_at, ended_at,
-               flag_settings):
+               flag_settings, handoff=""):
     """대화 하나가 끝났을 때 각 탭에 넣을 행을 한꺼번에 만든다."""
     common = {"conversation_id": conv_id, "tester_name": tester,
               "knowledge_mode": mode_label, "policy_version_id": policy_version}
@@ -181,8 +181,14 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
                 "source_rule": "NO_PRODUCT_FACT_GUESS", "category": "", "logged_at": "",
             }))
 
-    notes = [dict(common, **{"turn_no": "", "note_text": note, "tag": "", "logged_at": ""})] \
-        if note else []
+    notes = []
+    if note:
+        notes.append(dict(common, **{"turn_no": "", "note_text": note,
+                                     "tag": "테스터관찰", "logged_at": ""}))
+    # 인계 메모도 같은 탭에 남긴다. 태그로 구분되므로 새 컬럼이 필요 없다.
+    if handoff:
+        notes.append(dict(common, **{"turn_no": "", "note_text": handoff,
+                                     "tag": "상담원인계", "logged_at": ""}))
 
     return {"conversations": [conv], "turns": turns, "field_verdicts": fields,
             "flag_verdicts": flag_rows, "gaps": gaps, "notes": notes}
