@@ -26,7 +26,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.31"
+APP_VERSION = "2026-08-05.32"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -306,9 +306,17 @@ with tab_chat:
         # DB 에 없는 상품은 되묻기를 멈추고 없다고 알린 뒤, 나머지 주문을 계속한다.
         gone = ss.state.take_unavailable_notice()
         if gone:
-            names = ", ".join("'%s'" % RP.spoken(g) for g in gone)
-            notice = "%s 아직 취급하지 않는 상품이에요. 나머지로 도와드릴게요." % RP.eun(names)
-            fixed = (notice + "\n" + fixed).strip()
+            notes = []
+            miss = [k for k, why in gone if why != "rejected"]
+            drop = [k for k, why in gone if why == "rejected"]
+            if miss:
+                notes.append("%s 아직 취급하지 않는 상품이에요."
+                             % RP.eun(", ".join("'%s'" % RP.spoken(k) for k in miss)))
+            if drop:
+                notes.append("%s 주문에서 뺐어요. 필요하시면 다시 말씀해주세요."
+                             % RP.eul(", ".join("'%s'" % RP.spoken(k) for k in drop)))
+            notes.append("나머지로 도와드릴게요.")
+            fixed = (" ".join(notes) + "\n" + fixed).strip()
         tail = (out.get("reply") or "").strip() if err is None else ""
 
         # 고객이 주소나 연락처를 먼저 준 경우, 받았다는 말 없이 다음 질문만 하면

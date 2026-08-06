@@ -96,6 +96,8 @@ class Line:
         self.unavailable = False   # DB 에 없어 취급하지 않는다고 판정된 줄
         self.notice_shown = False  # 미취급 사실을 고객에게 이미 알렸는가
         self.notfound_turns = 0    # 몇 턴째 못 찾고 있는가
+        self.reject_turns = 0      # 아니라고 한 뒤 몇 턴째 대안을 못 고르고 있는가
+        self.drop_reason = ""      # 주문에서 뺀 이유. 고객에게 뭐라고 알릴지가 달라진다
         self.packs = None       # 무게 표현을 환산한 포장 개수
         self.unit_note = None   # '요청 2kg' 처럼 근거를 남긴다
 
@@ -311,35 +313,49 @@ class OrderState:
                 line.alternatives = []
 
         self._merge_same_product()
-        self._mark_unavailable(catalog)
+        self._mark_unavailable(catalog, policies.get_int("ASK_RETRY_LIMIT", 2))
 
-    def _mark_unavailable(self, catalog):
-        """DB 에 없는 표현을 언제까지 되물을지 정한다.
+    def _mark_unavailable(self, catalog, limit=2):
+        """되물음을 언제까지 계속할지 정한다.
 
-        가까운 상품조차 없으면 오타가 아니라 취급하지 않는 상품이다.
-        그때는 묻지 않고 없다고 말해야 한다. 같은 질문을 반복하는 것은
-        고객에게 아무 정보도 주지 않으면서 대화만 막는다.
-        가까운 상품이 있으면 오타일 수 있으니 한 턴은 되묻되,
-        그래도 안 풀리면 미취급으로 정리하고 나머지 주문을 진행한다."""
+        코드가 묻는 것은 거래명세서를 완성하기 위해서다. 몇 번을 물어도 안 풀리면
+        그 품목은 빼고 나머지를 진행해야 한다. 끝이 없는 되물음은 고객이 무슨 말을
+        해도 같은 문장만 돌려주는 벽이 된다.
+
+        빼는 이유는 두 가지이고 고객에게 할 말이 서로 다르다.
+            not_found  DB 에 없다 → 취급하지 않는 상품
+            rejected   고객이 아니라고 했는데 대안도 고르지 않았다 → 주문에서 뺌
+        """
         for line in self.lines:
             if line.unavailable:
                 continue
+
+            # 고객이 아니라고 한 품목 — 대안을 고를 때까지만 되묻는다
+            if line.rejected and line.alternatives:
+                line.reject_turns += 1
+                if line.reject_turns > limit:
+                    line.unavailable = True
+                    line.drop_reason = "rejected"
+                continue
+            line.reject_turns = 0
+
             if not (line.match and line.match.status == M.NOT_FOUND):
                 line.notfound_turns = 0
                 continue
 
             line.notfound_turns += 1
             near = M.near_candidates(line.key, catalog)
-            if not near or line.notfound_turns >= 2:
+            if not near or line.notfound_turns >= limit:
                 line.unavailable = True
+                line.drop_reason = "not_found"
 
     def take_unavailable_notice(self):
-        """아직 고객에게 알리지 않은 미취급 품목의 표현을 돌려준다."""
+        """아직 알리지 않은, 주문에서 뺀 품목을 (표현, 이유) 로 돌려준다."""
         out = []
         for line in self.lines:
             if line.unavailable and not line.notice_shown:
                 line.notice_shown = True
-                out.append(line.key)
+                out.append((line.key, line.drop_reason or "not_found"))
         return out
 
     def _merge_same_product(self):
