@@ -329,6 +329,11 @@ def upsell_context(quote, policies, catalog, exclude=(), top=3):
     if str(policies.get("UPSELL_FREE_SHIPPING", "허용")).strip() != "허용":
         return None
 
+    # 담긴 것이 없으면 권할 근거가 없다. 무엇을 사려는지도 모르는데 상품을 들이미는 것은
+    # 추천이 아니라 그냥 밀어내기다.
+    if not quote["rows"] or not quote["subtotal"]:
+        return None
+
     threshold = policies.get_int("FREE_SHIPPING_THRESHOLD", 0)
     if not threshold or quote["total"] is None or quote["shipping"] == 0:
         return None

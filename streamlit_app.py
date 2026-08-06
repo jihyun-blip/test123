@@ -26,7 +26,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.34"
+APP_VERSION = "2026-08-05.35"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -330,8 +330,6 @@ with tab_chat:
                                       ("연락처", ss.state.phone),
                                       ("주소", ss.state.address_base))
                if f and f.turn == turn]
-        if got and not tail:
-            fixed = ("%s 확인했습니다." % RP.eul(", ".join(got)) + "\n" + fixed).strip()
 
         # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.
         # 지침의 SMALLTALK 이 짧은 잡담을 허용하고, SMALLTALK_RETURN 이 복귀를 요구한다.
@@ -354,6 +352,11 @@ with tab_chat:
             fb = RP.fallback_ask(pend_after)
             if fb:
                 fixed = "\n\n".join(x for x in (fixed, fb) if x)
+
+        # 확인 인사는 tail 이 최종 확정된 뒤에 판단한다. 먼저 보면, 곧 지워질 tail 때문에
+        # 인사를 걸렀다가 결국 받았다는 말을 아무도 하지 않는 턴이 된다.
+        if got and not tail:
+            fixed = ("%s 확인했습니다." % RP.eul(", ".join(got)) + "\n" + fixed).strip()
 
         # 코드가 붙이는 물음이 "무엇을 찾으시냐", "몇 개 필요하냐" 처럼 일반적인 단계에서는,
         # LLM 이 이미 답하며 물었다면 같은 질문이 두 번 나간다. 그때는 코드 문장을 뺀다.
