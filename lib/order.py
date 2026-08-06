@@ -68,6 +68,17 @@ _DEMONSTRATIVE = {"이거", "이것", "요거", "요것", "저거", "저것", "�
                   "위에것", "방금것", "동일상품", "같은거", "같은것"}
 
 
+# 고객이 실제로 "그 상품이 아니다" 라고 말했는지. 모델은 단순한 질문에도 reject 를 보낸다.
+# 한 번 잘못 걸리면 고객이 무슨 말을 해도 같은 되물음만 돌아오는 벽이 만들어진다.
+_REJECT_SIGNAL = re.compile(
+    r"(말고|아니라|아닌데|아니야|아니에요|아니예요|아녜요|그게\s*아니|"
+    r"다른\s*거|다른\s*것|다른\s*상품|틀렸|잘못\s*(골라|담)|바꿔|취소)")
+
+
+def _looks_like_reject(text):
+    return bool(_REJECT_SIGNAL.search(str(text or "")))
+
+
 def _is_demonstrative(text):
     t = re.sub(r"[\s의]", "", str(text or "")).strip()
     return t in _DEMONSTRATIVE
@@ -146,7 +157,7 @@ class OrderState:
         before = self.snapshot()
 
         for op in out.get("item_ops") or []:
-            self._apply_op(op, turn, catalog, policies, each_hint)
+            self._apply_op(op, turn, catalog, policies, each_hint, user_text)
 
         # "각각 몇 개씩" 이라고 물었는데 고객이 "1개요" 라고만 답한 경우.
         # LLM 은 이걸 한 품목의 update 로만 보내는 일이 잦아, 나머지 줄이 계속 빈 채로 남는다.
@@ -216,7 +227,7 @@ class OrderState:
                 l.unit_expr = unit
         return True
 
-    def _apply_op(self, op, turn, catalog=None, policies=None, each_hint=False):
+    def _apply_op(self, op, turn, catalog=None, policies=None, each_hint=False, user_text=""):
         act = (op.get("op") or "add").lower()
         hint = (op.get("name_hint") or op.get("raw_text") or "").strip()
         label = (op.get("label_code") or "").strip()
@@ -252,7 +263,11 @@ class OrderState:
 
         existing = self._find(hint, catalog, policies)
 
-        # 고객이 "그 상품이 아니다" — 확정을 풀고 대체 후보를 받을 상태로 둔다
+        # 고객이 "그 상품이 아니다" — 확정을 풀고 대체 후보를 받을 상태로 둔다.
+        # 다만 고객이 실제로 그렇게 말했을 때만이다. "몇 개씩 파는데?" 같은 질문에도
+        # 모델이 reject 를 보내는데, 그대로 받으면 고객이 원한 적 없는 되물음에 갇힌다.
+        if act == "reject" and not _looks_like_reject(user_text):
+            return
         if act == "reject" and existing:
             existing.rejected = True
             existing.chosen = None
