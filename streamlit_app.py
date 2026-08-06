@@ -26,7 +26,7 @@ from lib.order import OrderState
 st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.29"
+APP_VERSION = "2026-08-05.30"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 TESTERS = ["이지현", "김경민"]
@@ -333,9 +333,10 @@ with tab_chat:
             if fb:
                 fixed = "\n\n".join(x for x in (fixed, fb) if x)
 
-        # 아직 아무것도 못 받은 단계의 코드 문장은 "무엇을 찾으시냐"는 일반적인 물음이다.
-        # LLM 이 이미 답하며 물었다면 같은 질문을 두 번 하는 셈이라 붙이지 않는다.
-        if kind == "order_ask" and tail:
+        # 코드가 붙이는 물음이 "무엇을 찾으시냐", "몇 개 필요하냐" 처럼 일반적인 단계에서는,
+        # LLM 이 이미 답하며 물었다면 같은 질문이 두 번 나간다. 그때는 코드 문장을 뺀다.
+        # 후보 목록을 내미는 단계는 제외한다. 거기 실린 상품명과 가격은 LLM 이 대신 쓸 수 없다.
+        if kind in ("order_ask", "quantity_ask") and tail and "?" in tail:
             fixed = ""
 
         # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
