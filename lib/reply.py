@@ -378,7 +378,9 @@ def _invoice_text(quote, policies):
         if threshold:
             out.append(T.t("ship_free", T.money(threshold)))
 
-    out.append(T.t("invoice_total", T.eul(T.money(quote["total"]))))
+    # 문구에 이미 조사가 들어 있다. 여기서 또 붙이면 "32,000원을을" 이 된다.
+    # 금액은 언제나 '원' 으로 끝나므로 문구 쪽 조사로 충분하다
+    out.append(T.t("invoice_total", T.money(quote["total"])))
     account = policies.get("ACCOUNT_INFO", "")
     if account:
         # 계좌번호는 고객이 은행 앱에 그대로 입력한다. 어느 언어에서도 그대로 둔다

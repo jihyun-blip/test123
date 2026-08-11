@@ -695,6 +695,12 @@ def ko_regression():
     st.rematch(cat, P, "full")
     q = st.quote(cat, P)
     check("회귀 합계가 예전과 같다 (20000+24000+배송 3000)", q["total"] == 47000, q)
+    inv = RP._invoice_text(q, P)
+    check("회귀 조사가 겹치지 않는다 (원을을 · 를를 등)",
+          not re.search(r"(을을|를를|은은|는는|이이|가가)", inv), inv)
+    check("회귀 총액 문장이 그대로",
+          "총 47,000원을 아래 계좌로 입금주시면 감사하겠습니다." in inv, inv)
+
     check("회귀 배송비 한 줄로만 적는다 (유형이 하나)",
           RP._invoice_text(q, P).count("배송비") == 1, RP._invoice_text(q, P))
 
