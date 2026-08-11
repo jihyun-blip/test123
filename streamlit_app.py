@@ -436,10 +436,10 @@ with tab_chat:
         if not ss.history:
             bot = T.t("greeting") + "\n" + bot
 
-        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode, bot_text=bot)
+        asking = kind in RP.ASK_STAGES or bool(pend_after["missing"] or pend_after["detail"])
+        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode, bot_text=bot, asking=asking)
         # 되물었는지는 물음표가 아니라 단계로 본다. 태국어는 물음표 없이 묻는다.
         prev_asked = bool(ss.history and ss.history[-1].get("asking"))
-        asking = kind in RP.ASK_STAGES or bool(pend_after["missing"] or pend_after["detail"])
         det = FL.detect(bot, ss.state, quote, P, out, prev_asked, catalog=CAT, asking=asking)
 
         ss.history.append({
@@ -460,7 +460,8 @@ with tab_chat:
         quote = state.quote(CAT, P)
         fl = FL.evaluate(state, quote, CAT, P,
                          ss.history[-1]["out"] if ss.history else {}, mode,
-                         bot_text=ss.history[-1]["bot"] if ss.history else "")
+                         bot_text=ss.history[-1]["bot"] if ss.history else "",
+                         asking=bool(ss.history and ss.history[-1].get("asking")))
 
         st.markdown(T.t("panel_order"))
 

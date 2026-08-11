@@ -63,7 +63,7 @@ def _priced(codes, catalog, T):
                      for c in codes) or T.t("fl_no_alt")
 
 
-def evaluate(state, quote, catalog, policies, out, mode, bot_text=""):
+def evaluate(state, quote, catalog, policies, out, mode, bot_text="", asking=False):
     """이번 턴 기준으로 떠야 할 플래그를 전부 모은다."""
     flags = []
     known = policies.flags
@@ -134,8 +134,14 @@ def evaluate(state, quote, catalog, policies, out, mode, bot_text=""):
             # 동·호를 전제하지 않는다. 고객은 기숙사·농장·컨테이너에 산다
             add("ADDRESS_DETAIL_MISSING", T.t("fl_address_detail"))
         if state.address_base.source == "image":
-            add("ADDRESS_IMAGE", T.t("fl_address_image",
-                                     state.address_base.source_ref or "image"))
+            # 같은 사진에서 이름·연락처까지 나왔으면 그 사실을 적는다. 상담원이
+            # 주소만 대조하고 이름은 그냥 믿는 일이 생기지 않게 한다
+            ref = state.address_base.source_ref or "image"
+            got = [T.t("got_address")]
+            for key, f in (("got_receiver", state.receiver), ("got_phone", state.phone)):
+                if f and getattr(f, "source", "") == "image" and                         (getattr(f, "source_ref", "") or "image") == ref:
+                    got.append(T.t(key))
+            add("ADDRESS_IMAGE", T.t("fl_address_image", ref, T.eul("·".join(got))))
 
         api = state.addr_api or {}
         if api.get("done"):
@@ -163,7 +169,9 @@ def evaluate(state, quote, catalog, policies, out, mode, bot_text=""):
     # 자동 감지에만 남기고 플래그를 올리지 않으면 아무것도 막지 못한다.
     # 실제 로그 196턴 중 16턴에서 감지됐는데 흐름은 그대로 진행됐다.
     # 흐름을 차단하기 시작하므로 지침에서 끌 수 있게 해둔다.
-    if bot_text and str(policies.get("AMOUNT_MISMATCH_ENFORCE", "Y")).strip().upper() == "Y":
+    # 되물음 중이면 검사하지 않는다. 그때 문장에 실린 금액은 코드가 후보를 보여주려고
+    # 직접 넣은 것이라, 견적에 없는 숫자인 게 정상이다.
+    if bot_text and not asking and             str(policies.get("AMOUNT_MISMATCH_ENFORCE", "Y")).strip().upper() == "Y":
         bogus = amount_mismatch(bot_text, quote)
         if bogus:
             add("AMOUNT_MISMATCH", T.t("fl_amount", ", ".join(map(str, bogus))))
@@ -172,11 +180,16 @@ def evaluate(state, quote, catalog, policies, out, mode, bot_text=""):
 
 
 def amount_mismatch(bot_text, quote):
-    """응답 문장에 있는데 계산값에는 없는 금액. 돌려주는 것은 그 숫자들이다."""
-    if quote.get("total") is None:
-        return []
+    """응답 문장에 있는데 계산값에는 없는 금액. 돌려주는 것은 그 숫자들이다.
+
+    예전에는 총액이 확정되지 않으면 검사를 건너뛰었다. 그런데 모델이 금액을 지어내는
+    것은 오히려 코드가 아직 총액을 못 낸 순간이다. 실제로 "배송비 4,000원을 더해서
+    총 35,000원" 이라는 문장이 그대로 나갔고(배송비는 3,000원이다) 아무것도 막지 않았다.
+    확정 여부와 무관하게 대조하고, 아직 없는 총액만 비교 대상에서 뺀다."""
     nums = {int(n.replace(",", "")) for n in re.findall(r"[\d,]{3,}", bot_text or "")}
-    legit = {quote["total"], quote["subtotal"], quote["shipping"]}
+    legit = {quote["subtotal"], quote["shipping"]}
+    if quote.get("total") is not None:
+        legit.add(quote["total"])
     legit |= {r["단가"] for r in quote["rows"] if r["단가"]}
     legit |= {r["소계"] for r in quote["rows"] if r["소계"]}
     for r in quote.get("shipping_rows") or []:
@@ -204,8 +217,9 @@ def detect(bot_text, state, quote, policies, out, prev_asked, catalog=None, aski
     # 되물었는지 판정. 넘겨받은 값이 없을 때만 예전 방식으로 폴백한다
     asked_now = asking if asking is not None else ("?" in (bot_text or ""))
 
-    # 금액 환각 — 응답 문장의 숫자를 계산값과 대조
-    bogus = amount_mismatch(bot_text, quote)
+    # 금액 환각 — 응답 문장의 숫자를 계산값과 대조.
+    # 되물음 중에는 코드가 후보 가격을 직접 쓰므로 보지 않는다
+    bogus = [] if asked_now else amount_mismatch(bot_text, quote)
     if bogus:
         hit("dt_amount", "SHOW_LINE_BASIS",
             T.t("dt_amount_body", ", ".join(map(str, bogus))))

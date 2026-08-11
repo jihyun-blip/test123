@@ -601,6 +601,27 @@ def c3_d1_d2():
     fl = FL.evaluate(st, q, cat, P, {}, "full")
     check("D1 정상 번호는 통과", not any(f.key == "PHONE_INVALID" for f in fl))
 
+    # 총액이 아직 확정되지 않은 턴에서도 대조해야 한다. 모델이 금액을 지어내는 것은
+    # 오히려 코드가 총액을 못 낸 순간이다
+    st_open = OrderState()
+    st_open.apply({"item_ops": [{"op": "add", "name_hint": "삼겹살"}]}, 1, cat, P)
+    st_open.rematch(cat, P, "full")
+    q_open = st_open.quote(cat, P)
+    made_up = "배송비 4,000원을 더해서 총 35,000원입니다."
+    check("D2 총액 미확정 턴에서도 지어낸 금액을 잡는다",
+          q_open["total"] is None and FL.amount_mismatch(made_up, q_open) == [4000, 35000],
+          (q_open["total"], FL.amount_mismatch(made_up, q_open)))
+    check("D2 되물음 중에는 검사하지 않는다 (코드가 후보 가격을 직접 쓴다)",
+          not any(f.key == "AMOUNT_MISMATCH"
+                  for f in FL.evaluate(st_open, q_open, cat, P, {}, "full",
+                                       bot_text=made_up, asking=True)),
+          [f.key for f in FL.evaluate(st_open, q_open, cat, P, {}, "full",
+                                      bot_text=made_up, asking=True)])
+    check("D2 되물음이 아니면 확정 전에도 플래그를 올린다",
+          any(f.key == "AMOUNT_MISMATCH"
+              for f in FL.evaluate(st_open, q_open, cat, P, {}, "full",
+                                   bot_text=made_up, asking=False)))
+
     bot = "총 99999원 입금해주세요"
     fl = FL.evaluate(st, q, cat, P, {}, "full", bot_text=bot)
     check("D2 금액 불일치가 실제 플래그로 뜬다",
@@ -716,6 +737,12 @@ def th_ui_and_replies():
     # 문구표에 빠진 키가 있으면 그 자리만 한국어로 튀어나온다
     missing = [k for k in ko if k not in th]
     check("문구표에 태국어가 빠진 키가 없다", not missing, missing)
+
+    holes = lambda v: len(re.findall(r"%[sd]", str(v)))
+    mism = [k for k, v in ko.items() if holes(v) != holes(th.get(k, ""))]
+    check("문구표의 자리표시자 개수가 언어마다 같다", not mism, mism)
+    star = [k for k, v in th.items() if "$" in str(v) and "%" in str(v).split("$")[0][-3:]]
+    check("파이썬이 못 읽는 위치 지정(%1$s)이 없다", not star, star)
 
     hangul = re.compile(r"[가-힣]")
     leaked = [k for k, v in th.items() if hangul.search(str(v))]
