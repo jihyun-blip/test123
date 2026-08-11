@@ -593,6 +593,42 @@ with tab_verdict:
                                      disabled=(v == "통과"))
             verdicts[key] = {"verdict": v, "cause": None if v == "통과" else cause}
 
+        # ---------------------------------------------------------- 플래그 판정
+        # 시트에는 정탐·오탐을 찍는 칸이 있는데 화면에 없었다. 그래서 빈 채로 저장되고,
+        # 나중에 시트를 열어 키와 근거만 보고 판단해야 했다. 그때는 대화가 눈앞에 없다.
+        st.divider()
+        st.markdown(T.t("vd_flags"))
+        st.caption(T.t("vd_flags_help"))
+
+        raised = {}
+        for h in ss.history:
+            for f in h.get("flags") or []:
+                raised.setdefault(f.key, (f.value, f.evidence, h["turn"]))
+
+        FLAG_VERDICTS = [("정탐", "fv_true"), ("오탐", "fv_false"), ("판단보류", "fv_hold")]
+        flag_verdicts = {}
+        if raised:
+            for key, (value, evidence, at) in raised.items():
+                icon = {"차단": "🛑", "상담원연결": "🙋", "되물음": "❓",
+                        "검수필수": "🔍"}.get(value, "⚠️")
+                st.markdown("%s **%s** · `%s` · %s  \n<small>%s</small>"
+                            % (icon, key, T.action(value), T.t("vd_flag_turn", at),
+                               evidence), unsafe_allow_html=True)
+                v = st.radio(key, [c for c, _ in FLAG_VERDICTS], horizontal=True,
+                             index=2, format_func=lambda c: T.t(dict(FLAG_VERDICTS)[c]),
+                             key="fv_%s" % key, label_visibility="collapsed")
+                if v != "판단보류":
+                    flag_verdicts[key] = v
+        else:
+            st.caption(T.t("vd_no_flags"))
+
+        # 오탐보다 미탐이 찾기 어렵다. 대화를 본 사람만 지목할 수 있다.
+        missed = st.multiselect(
+            T.t("vd_missed"), sorted(k for k in P.flags if k not in raised),
+            help=T.t("vd_missed_help"), placeholder=T.t("vd_missed_hint"),
+            format_func=lambda k: "%s — %s" % (k, (P.flags[k].get("설명") or "")[:40]))
+
+        st.divider()
         note = st.text_area(T.t("vd_note"), placeholder=T.t("vd_note_hint"))
 
         if ss.saved:
@@ -648,7 +684,8 @@ with tab_verdict:
                         policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
                         started_at=ss.started_at, ended_at=now(),
                         flag_settings={k: r.get("값") for k, r in P.flags.items()},
-                        lang=lang, channel=channel, app_version=APP_VERSION)
+                        lang=lang, channel=channel, app_version=APP_VERSION,
+                        flag_verdicts=flag_verdicts, missed_flags=missed)
                     with st.status(T.t("vd_writing"), expanded=True) as status:
                         for tab, rows in bundle.items():
                             st.write(T.t("vd_writing_tab", tab))

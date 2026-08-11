@@ -103,7 +103,8 @@ def _avg(values):
 
 def build_rows(conv_id, tester, mode_label, model, state, quote, history,
                verdicts, sources, note, policy_version, started_at, ended_at,
-               flag_settings, handoff="", lang="", channel="", app_version=""):
+               flag_settings, handoff="", lang="", channel="", app_version="",
+               flag_verdicts=None, missed_flags=None):
     """대화 하나가 끝났을 때 각 탭에 넣을 행을 한꺼번에 만든다.
 
     lang·channel 은 대화마다 다르다. 남기지 않으면 나중에 집계할 때
@@ -175,16 +176,28 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
             "judged_at": "", "note": "",
         }))
 
-    # 이번 대화에서 뜬 플래그. 정탐·미탐 판정은 사람이 나중에 채운다.
+    # 이번 대화에서 뜬 플래그와 그에 대한 테스터 판정.
+    #   정탐  떠야 할 때 떴다        expected=Y raised=Y
+    #   오탐  뜰 일이 아닌데 떴다     expected=N raised=Y
+    #   미탐  떴어야 하는데 안 떴다   expected=Y raised=N
+    # 미탐은 대화를 본 사람만 지목할 수 있어서 화면에서 받아 여기로 넘어온다.
+    verdict_of = flag_verdicts or {}
+    expected_of = {"정탐": "Y", "오탐": "N"}
     raised = {}
     for h in history:
         for f in h.get("flags") or []:
             raised.setdefault(f.key, (f.value, f.evidence, h["turn"]))
     flag_rows = [dict(common, **{
-        "flag_key": k, "flag_value": v[0], "expected": "", "raised": "Y",
-        "verdict": "", "behavior_verdict": "", "raised_turn": v[2],
+        "flag_key": k, "flag_value": v[0],
+        "expected": expected_of.get(verdict_of.get(k, ""), ""), "raised": "Y",
+        "verdict": verdict_of.get(k, ""), "behavior_verdict": "", "raised_turn": v[2],
         "evidence": v[1], "judged_at": "", "note": "",
     }) for k, v in raised.items()]
+    flag_rows += [dict(common, **{
+        "flag_key": k, "flag_value": (flag_settings or {}).get(k, ""),
+        "expected": "Y", "raised": "N", "verdict": "미탐", "behavior_verdict": "",
+        "raised_turn": "", "evidence": "", "judged_at": "", "note": "",
+    }) for k in (missed_flags or [])]
 
     gaps = []
     for h in history:

@@ -849,6 +849,57 @@ def weight_order():
     check("500g 포장에 1키로는 2개로 확정", q["rows"][0]["수량"] == 2, q["rows"][0])
 
 
+def flag_judging():
+    """테스터가 찍은 플래그 판정이 로그 행으로 제대로 옮겨지는지."""
+    from lib import logs as LOG
+
+    class F:
+        def __init__(self, key, value, ev):
+            self.key, self.value, self.evidence = key, value, ev
+
+    history = [{"turn": 2, "user": "u", "bot": "b", "at": "", "usage": {},
+                "flags": [F("AMBIGUOUS_ALIAS", "되물음", "'꼬리' 가 2개 상품에 걸림"),
+                          F("RECEIVER_MISSING", "미완료", "수령인 이름 미확보")],
+                "out": {}, "diff": [], "detect": []}]
+
+    class S:
+        receiver = phone = address_base = address_detail = type("F", (), {"value": ""})()
+        zipno = road_addr = ""
+        lines = []
+    quote = {"rows": [], "subtotal": 0, "shipping": 0, "total": 0, "blocked": False,
+             "shipping_rows": []}
+    bundle = LOG.build_rows(
+        "c1", "A", "전체", "m", S(), quote, history, {}, {}, "",
+        policy_version="v", started_at="", ended_at="",
+        flag_settings={"AMBIGUOUS_ALIAS": "되물음", "RECEIVER_MISSING": "미완료",
+                       "SOLDOUT": "되물음"},
+        flag_verdicts={"AMBIGUOUS_ALIAS": "정탐", "RECEIVER_MISSING": "오탐"},
+        missed_flags=["SOLDOUT"])
+    rows = {r["flag_key"]: r for r in bundle["flag_verdicts"]}
+
+    check("정탐은 expected=Y raised=Y 로 남는다",
+          (rows["AMBIGUOUS_ALIAS"]["verdict"], rows["AMBIGUOUS_ALIAS"]["expected"],
+           rows["AMBIGUOUS_ALIAS"]["raised"]) == ("정탐", "Y", "Y"),
+          rows["AMBIGUOUS_ALIAS"])
+    check("오탐은 expected=N 으로 남는다",
+          (rows["RECEIVER_MISSING"]["verdict"], rows["RECEIVER_MISSING"]["expected"])
+          == ("오탐", "N"), rows["RECEIVER_MISSING"])
+    check("미탐은 뜨지도 않은 플래그로 한 줄이 생긴다",
+          (rows["SOLDOUT"]["verdict"], rows["SOLDOUT"]["raised"],
+           rows["SOLDOUT"]["expected"], rows["SOLDOUT"]["flag_value"])
+          == ("미탐", "N", "Y", "되물음"), rows["SOLDOUT"])
+    check("근거와 뜬 턴은 그대로 남는다",
+          rows["AMBIGUOUS_ALIAS"]["raised_turn"] == 2
+          and "꼬리" in rows["AMBIGUOUS_ALIAS"]["evidence"], rows["AMBIGUOUS_ALIAS"])
+
+    bundle = LOG.build_rows("c1", "A", "전체", "m", S(), quote, history, {}, {}, "",
+                            policy_version="v", started_at="", ended_at="",
+                            flag_settings={})
+    check("아무것도 안 찍으면 판정 칸이 빈 채로 남는다",
+          all(r["verdict"] == "" for r in bundle["flag_verdicts"])
+          and len(bundle["flag_verdicts"]) == 2, bundle["flag_verdicts"])
+
+
 def flag_coverage():
     """시트에서 플래그 행을 지우면 add() 가 조용히 넘어가 아무 일도 안 일어난다.
     에러도 경고도 없다. 그래서 코드가 부르는 키 목록을 시트와 대조한다.
@@ -878,7 +929,7 @@ def main():
     for fn in (a2_label_and_channel, a3_whitelist, a4_active_soldout, a5_shipping,
                a6_near_index, b1_units, b2_policy_lang, b3_reject_evidence,
                b4_stage_detect, b5_nfc, c1_narrowing, c2_options, c3_d1_d2,
-               th_ui_and_replies, weight_order, flag_coverage, ko_regression):
+               th_ui_and_replies, weight_order, flag_coverage, flag_judging, ko_regression):
         print("\n[%s]" % fn.__name__)
         fn()
     print("\n" + "=" * 70)
