@@ -308,7 +308,7 @@ def _product_line(catalog, code, mode):
 
 def build_user(text, state, catalog, cand_codes, mode, history=None,
                fixed_reply=None, upsell=None, pending=None, recent=4,
-               options_limit=5):
+               options_limit=5, image_count=0):
     parts = []
 
     # 전체 이력을 재전송하지 않는다. 최근 N턴만 보낸다.
@@ -389,7 +389,15 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
         rows = [_product_line(catalog, c, mode) for c in cand_codes]
         parts.append("[후보 상품]\n" + "\n".join(rows))
 
-    parts.append("[고객 발화]\n" + str(text or ""))
+    said = str(text or "").strip()
+    if not said and image_count:
+        # 사진만 보내고 글은 한 줄도 안 쓰는 고객이 흔하다. 발화 자리를 비워 보내면
+        # 모델은 아무 요청도 없는 것으로 읽고 인사만 하고 끝낸다. 사진이 왔다는 사실을
+        # 발화 자리에 적어준다.
+        parts.append("[고객 발화]\n(글 없이 사진 %d장만 보냈다. 사진에서 읽어 item_ops 를"
+                     " 채운다. 인사만 하고 넘어가지 않는다.)" % image_count)
+    else:
+        parts.append("[고객 발화]\n" + said)
     return "\n\n".join(parts)
 
 

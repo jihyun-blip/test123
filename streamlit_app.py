@@ -255,7 +255,7 @@ with tab_chat:
                 ss.state.upsell_shown += 1
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode,
                               history=ss.history, pending=pend_before, upsell=upsell,
-                              options_limit=MAX_OPTIONS)
+                              options_limit=MAX_OPTIONS, image_count=len(new_imgs))
 
         t0 = time.time()
         usage, raw, out, err = {}, "", None, None
@@ -388,8 +388,13 @@ with tab_chat:
         # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.
         # 지침의 SMALLTALK 이 짧은 잡담을 허용하고, SMALLTALK_RETURN 이 복귀를 요구한다.
         # intent 만 보면 답과 질문이 섞인 발화에서 질문을 놓친다. 고객이 친 문장도 같이 본다.
-        digression = (out.get("intent") in ("smalltalk", "question", "complaint")
-                      or RP.asked_question(prompt))
+        # 고객이 글을 한 줄도 안 썼으면 "딴 얘기" 라는 것이 성립하지 않는다.
+        # 사진만 온 턴을 모델이 smalltalk 으로 분류하면 그 인사가 예외로 살아남아,
+        # 코드가 만든 "각각 몇 개씩 필요하신가요?" 앞에 "어떤 상품으로 준비해
+        # 드릴까요?" 가 서서 서로 모순된 문장이 나간다.
+        digression = bool(str(prompt or "").strip()) and (
+            out.get("intent") in ("smalltalk", "question", "complaint")
+            or RP.asked_question(prompt))
 
         # 코드가 품목을 되묻는 중이면 LLM 의 덧붙임을 버린다.
         # 한 턴에 질문이 둘이면 고객이 무엇에 답해야 할지 모르고,
