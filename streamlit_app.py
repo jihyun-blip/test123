@@ -302,14 +302,20 @@ with tab_chat:
                     return True
             return False
 
+        label_read = None
         if new_imgs and not any(_points_to_product(o) for o in (out.get("item_ops") or [])):
+            items, label_err = LLM.read_labels(API_KEY, model, new_imgs)
+            # 이 경로가 돌았는지, 무엇을 읽었는지, 왜 실패했는지를 관찰 패널에 남긴다.
+            # 조용히 빈손으로 끝나면 사진을 보내도 품목이 안 잡히는 이유를 알 수 없다
+            label_read = {"읽은 것": items, "실패": label_err}
             extra = []
-            for it in LLM.read_labels(API_KEY, model, new_imgs):
+            for it in items:
                 code = LLM._code_of(it.get("label_code") or it.get("printed_name"), CAT)
                 if code:
                     extra.append({"op": "add", "name_hint": CAT.display(code),
                                   "label_code": code, "quantity": None,
                                   "source": "image", "source_ref": it.get("ref")})
+            label_read["살린 품목"] = [e["label_code"] for e in extra]
             if extra:
                 out["item_ops"] = extra
 
@@ -409,7 +415,11 @@ with tab_chat:
         # 코드가 붙이는 물음이 "무엇을 찾으시냐", "몇 개 필요하냐" 처럼 일반적인 단계에서는,
         # LLM 이 이미 답하며 물었다면 같은 질문이 두 번 나간다. 그때는 코드 문장을 뺀다.
         # 후보 목록을 내미는 단계는 제외한다. 거기 실린 상품명과 가격은 LLM 이 대신 쓸 수 없다.
-        if kind in ("order_ask", "quantity_ask") and tail and "?" in tail:
+        # 다만 이번 턴에 사진이 왔으면 코드 문장을 남긴다. 사진에서 상품을 못 읽었을 때
+        # LLM 의 일반적인 인사("어떤 상품으로 준비해 드릴까요?")가 코드가 만든
+        # "보내주신 사진에서 상품을 확인하지 못했어요" 를 덮어버리면,
+        # 고객은 사진이 읽혔는지조차 모른 채 같은 사진을 다시 보낸다.
+        if kind in ("order_ask", "quantity_ask") and tail and "?" in tail and not new_imgs:
             fixed = ""
 
         # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
@@ -430,6 +440,7 @@ with tab_chat:
         ss.history.append({
             "turn": turn, "user": prompt, "bot": bot, "fixed": fixed, "kind": kind,
             "asking": asking, "lang": lang, "channel": channel,
+            "label_read": label_read,
             "img_resize": [i["resize"] for i in new_imgs if i.get("resize")],
             "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw, "error": err,
             "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
@@ -530,6 +541,10 @@ with tab_chat:
                 st.write(ss.state.addr_api or T.t("panel_addr_api_none"))
                 st.caption(T.t("panel_images"))
                 st.write(ss.state.images or T.t("panel_no_images"))
+                if h.get("label_read"):
+                    # 1차에서 품목을 못 건져 라벨만 다시 읽은 턴
+                    st.caption(T.t("panel_label_read"))
+                    st.write(h["label_read"])
                 if ss.state.phone_second:
                     st.caption(T.t("panel_phone2", ss.state.phone_second))
             u = h["usage"]

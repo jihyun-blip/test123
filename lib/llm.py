@@ -454,18 +454,24 @@ LABEL_READ = (
 
 
 def read_labels(api_key, model, images):
-    """상품 이미지에서 라벨코드만 따로 읽는다.
+    """상품 이미지에서 라벨코드만 따로 읽는다. 반환값은 (읽은 것, 실패 사유).
 
     1차 호출이 코드를 읽어놓고도 item_ops 에 넣지 않는 일이 있어,
-    품목을 하나도 못 건졌을 때 이 경로로 한 번 더 확인한다."""
+    품목을 하나도 못 건졌을 때 이 경로로 한 번 더 확인한다.
+
+    예전에는 attempts=1 이라 과부하(503) 한 번에 포기하고 빈 목록을 돌려줬다.
+    마지막 경로가 조용히 죽으면 사진을 세 장 보내도 품목이 하나도 안 잡히는데,
+    화면에는 아무 사유도 남지 않았다. 재시도하고 실패를 밖으로 알린다."""
     if not api_key or not images:
-        return []
+        return [], "API 키 또는 이미지 없음"
     try:
-        out, _, _ = call(api_key, model, LABEL_READ, "라벨코드를 읽어라.", images,
-                         attempts=1, schema=None)
-    except Exception:
-        return []
-    return (out or {}).get("items") or []
+        out, raw, _ = call(api_key, model, LABEL_READ, "라벨코드를 읽어라.", images,
+                           schema=None)
+    except Exception as e:
+        return [], "%s: %s" % (type(e).__name__, e)
+    if out is None:
+        return [], "응답을 JSON 으로 읽지 못함 (%d자)" % len(raw or "")
+    return (out or {}).get("items") or [], ""
 
 
 def repair(s):
