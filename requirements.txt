@@ -1,4 +1,4 @@
-streamlit>=1.40
+streamlit>=1.43   # chat_input(accept_file) — 사진만 보내는 턴을 재현하려면 필요
 pandas>=2.0
 requests>=2.31
 google-genai>=0.3

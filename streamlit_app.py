@@ -172,7 +172,7 @@ with tab_chat:
     with left:
         for h in ss.history:
             with st.chat_message("user"):
-                st.write(h["user"])
+                st.write(h["user"] or T.t("chat_image_only"))
                 refs = h.get("img_refs") or []
                 if refs:
                     kinds = {i["ref"]: i.get("kind", "") for i in ss.state.images}
@@ -202,20 +202,24 @@ with tab_chat:
         # 처리 전이라도 고객 발화는 즉시 보여준다. 전송됐는지 몰라 다시 누르는 일을 막는다.
         if ss.pending:
             with st.chat_message("user"):
-                st.write(ss.pending["user"])
+                st.write(ss.pending["user"] or T.t("chat_image_only"))
                 if ss.pending["imgs"]:
                     st.caption(T.t("chat_attached")
                                + ", ".join(i["ref"] for i in ss.pending["imgs"]))
             with st.chat_message("assistant"):
                 st.caption(T.t("chat_thinking"))
 
+        # 첨부를 입력창 안에 둔다. 따로 있으면 텍스트가 비었을 때 전송이 안 돼서,
+        # 사진만 보내는 고객(실제로 흔하다)을 재현할 수 없다.
         up, prompt = None, None
         if not ss.ended and not ss.pending:
-            up = st.file_uploader(T.t("chat_upload"), type=["png", "jpg", "jpeg", "webp"],
-                                  accept_multiple_files=True, key="up_%d" % len(ss.history))
-            prompt = st.chat_input(T.t("chat_input"))
+            sub = st.chat_input(T.t("chat_input"), accept_file="multiple",
+                                file_type=["png", "jpg", "jpeg", "webp"])
+            if sub:
+                prompt = (sub.text or "").strip()
+                up = sub.files
 
-    if prompt:
+    if prompt or up:
         new_imgs = []
         for f in up or []:
             ref = "img_%d" % (len(ss.images) + len(new_imgs) + 1)
