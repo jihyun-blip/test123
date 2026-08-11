@@ -1,0 +1,13 @@
+country_code,channel,item_code,price,currency,rank,note
+KR,facebook,A0013,4000,KRW,4,
+KR,facebook,B0023,10000,KRW,1,
+KR,facebook,A0022,5000,KRW,2,
+KR,facebook,A0031,7000,KRW,5,
+KR,facebook,A0024,8000,KRW,3,
+KR,facebook,A0026,24000,KRW,6,
+KR,platform,A0013,4500,KRW,,자체 플랫폼 판매가
+KR,platform,B0023,10500,KRW,,자체 플랫폼 판매가
+KR,platform,A0022,5500,KRW,,자체 플랫폼 판매가
+KR,platform,A0031,7500,KRW,,자체 플랫폼 판매가
+KR,platform,A0024,8500,KRW,,자체 플랫폼 판매가
+KR,platform,A0026,24500,KRW,,자체 플랫폼 판매가

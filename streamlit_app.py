@@ -18,27 +18,39 @@ from lib import juso
 from lib import logs as LOG
 from lib import llm as LLM
 from lib import matching as M
+from lib import messages as MSG
 from lib import policies as pol
 from lib import reply as RP
 from lib import sheets
 from lib.order import OrderState
 
-st.set_page_config(page_title="기능 B 챗봇 테스트", page_icon="🧪", layout="wide")
-
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-05.35"
+APP_VERSION = "2026-08-10.2"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
-TESTERS = ["이지현", "김경민"]
+# 태국 직원이 이 도구를 직접 쓴다. 이름 대신 A·B·C 로 구분한다.
+TESTERS = ["A", "B", "C"]
+
+# 세 축. 배송지·통화는 항상 한국이라 나라는 지금 하나뿐이다.
+COUNTRY = "KR"
+LANGS = MSG.LANGS          # 기본이 th. 화면과 고객 응답이 함께 이 값을 따른다
+CHANNELS = ["facebook", "platform"]
+
+# 화면 언어는 언어 선택 위젯이 정하는데, 그 위젯의 라벨도 번역해야 한다.
+# 위젯을 그리기 전에 지난 선택을 먼저 읽어 문구표를 잡는다.
+T = MSG.for_lang(st.session_state.get("lang_sel", MSG.DEFAULT_LANG))
+
+st.set_page_config(page_title=T.t("ui_title"), page_icon="🧪", layout="wide")
 
 # 테스터가 대화 끝에 통과·실패를 찍는 항목. 이게 이 도구의 핵심 산출물이다.
-VERDICT_FIELDS = [
-    ("invoice", "거래명세서 (품목·수량·가격)"),
-    ("address", "주소"),
-    ("receiver", "수령자명"),
-    ("phone", "전화번호"),
-]
-CAUSE_TAGS = ["추출오류", "매칭오류", "단위오해", "DB에없음", "지침부족", "기타"]
+# 왼쪽 키와 아래 원인 코드는 로그에 그대로 쌓이므로 번역하지 않는다.
+# 화면에 보이는 이름만 언어를 탄다. 안 그러면 언어마다 다른 값이 쌓여 집계가 갈린다.
+VERDICT_KEYS = [("invoice", "vf_invoice"), ("address", "vf_address"),
+                ("receiver", "vf_receiver"), ("phone", "vf_phone")]
+CAUSE_TAGS = [("추출오류", "cause_extract"), ("매칭오류", "cause_match"),
+              ("단위오해", "cause_unit"), ("DB에없음", "cause_nodb"),
+              ("지침부족", "cause_policy"), ("기타", "cause_etc")]
+MODES = [("전체", "ui_mode_full"), ("축소", "ui_mode_reduced")]
 
 
 def init():
@@ -73,13 +85,21 @@ init()
 ss = st.session_state
 
 # ------------------------------------------------------------------ 상단
-head = st.columns([1.6, 1.6, 2, 1.1, 1.1])
-tester = head[0].selectbox("테스터", TESTERS)
-mode_label = head[1].radio("지식 수준", ["전체", "축소"], horizontal=True,
-                           help="축소 모드는 외부 개발사가 실제로 갖게 될 수준을 재현합니다")
+head = st.columns([1.4, 1.4, 1.8, 0.9, 1.2, 1, 1])
+tester = head[0].selectbox(T.t("ui_tester"), TESTERS)
+mode_label = head[1].radio(T.t("ui_mode"), [c for c, _ in MODES], horizontal=True,
+                           format_func=lambda c: T.t(dict(MODES)[c]),
+                           help=T.t("ui_mode_help"))
 mode = "full" if mode_label == "전체" else "reduced"
 MODEL_LIST = sheets.secret("MODELS", ["(목 모드)"])
-model = head[2].selectbox("모델", MODEL_LIST)
+model = head[2].selectbox(T.t("ui_model"), MODEL_LIST)
+# 언어는 이름·유사어·단위의 축, 채널은 판매가·배송비의 축이다. 둘은 서로 다른 축이라
+# 함께 들고 있어야 한다. 상품 이름은 채널이 달라도 같다.
+# 화면 문구도 이 값을 따른다. 태국 직원이 태국어 화면에서 태국어 응답을 보고 판정한다.
+lang = head[3].selectbox(T.t("ui_lang"), LANGS, key="lang_sel",
+                         help=T.t("ui_lang_help"))
+channel = head[4].selectbox(T.t("ui_channel"), CHANNELS, help=T.t("ui_channel_help"))
+T = MSG.for_lang(lang)
 
 def overload_backup(current):
     """과부하 때 대신 부를 모델.
@@ -93,43 +113,59 @@ def overload_backup(current):
 
     cheaper = [m for m in MODEL_LIST if m != current and price(m) < price(current)]
     return max(cheaper, key=price) if cheaper else None
-if head[3].button("DB 새로고침", width="stretch"):
+if head[5].button(T.t("ui_refresh"), width="stretch"):
     sheets.clear_cache()
+    # 행 수가 그대로인 수정(가격 한 칸 변경 등)도 반영되게 카탈로그까지 버린다
+    st.cache_resource.clear()
     st.rerun()
-if head[4].button("대화 초기화", width="stretch"):
+if head[6].button(T.t("ui_reset"), width="stretch"):
     reset_conversation()
     st.rerun()
 
-data, origins, errors = sheets.load_all()
+data, origins, errors, warns = sheets.load_all()
+for name, err in warns.items():
+    # 선택 소스는 없어도 폴백으로 돈다. 다만 조용히 넘어가지는 않는다
+    st.warning(T.t("dt_sheet_warn", name, err))
 if errors:
     for name, err in errors.items():
-        st.error("**%s** 를 읽지 못했습니다\n\n```\n%s\n```" % (name, err))
+        st.error(T.t("dt_sheet_fail", name) + "\n\n```\n%s\n```" % err)
         # 401/403 은 앱이나 버튼 문제가 아니라 시트 공유 설정이 풀린 것이다.
         # 안내가 없으면 테스터가 자기가 무언가를 망가뜨렸다고 생각한다.
         if "401" in str(err) or "403" in str(err):
-            st.warning(
-                "시트 공유 설정이 풀렸습니다. **DB 새로고침 버튼 때문이 아닙니다.**\n\n"
-                "해당 구글 시트 → **공유** → **일반 액세스** 를 "
-                "`링크가 있는 모든 사용자` · **뷰어** 로 바꾼 뒤 "
-                "**DB 새로고침** 을 눌러주세요.")
+            st.warning(T.t("dt_share_fix"))
     st.stop()
 
-P = pol.Policies(data["bot_policies"])
-CAT = M.Catalog(data["master_products"], data["country_products"], data["synonyms"])
+@st.cache_resource(show_spinner=False)
+def build_catalog(_data, lang, country_code, channel, fingerprint):
+    """카탈로그는 축(언어·나라·채널)마다 하나다. 화면이 다시 그려질 때마다
+    10만 행을 다시 펼치면 조작할 때마다 그만큼 기다리게 된다.
+    fingerprint 는 시트가 바뀌었는지 보는 값이고, 앞의 _data 는 해시하지 않는다."""
+    return M.Catalog(_data["master_products"], _data["prices"], _data["product_names"],
+                     _data["synonyms"], lang=lang, country_code=country_code,
+                     channel=channel, shipping=_data["shipping"], units=_data["units"])
+
+
+P = pol.Policies(data["bot_policies"], lang=lang)
+CAT = build_catalog(data, lang, COUNTRY, channel,
+                    tuple(len(data[k]) for k in sorted(data)))
+MAX_OPTIONS = P.get_int("AMBIGUOUS_MAX_OPTIONS", 5) or 5
 
 API_KEY = sheets.secret("GEMINI_API_KEY")
 JUSO_KEY = sheets.secret("JUSO_CONFM_KEY")
 
-st.caption("빌드 %s" % APP_VERSION)
+st.caption(T.t("ui_build", APP_VERSION))
+
+# 화면 표시용 이름은 언어를 타고, 저장되는 키는 그대로 둔다
+VERDICT_FIELDS = [(k, T.t(label_key)) for k, label_key in VERDICT_KEYS]
 
 tab_report, tab_chat, tab_verdict, tab_data = st.tabs(
-    ["📊 보고서", "💬 대화", "✅ 판정", "🗄 데이터"])
+    [T.t("tab_report"), T.t("tab_chat"), T.t("tab_verdict"), T.t("tab_data")])
 
 
 # ================================================================== 대화
 with tab_chat:
     if ss.ended:
-        st.success("대화가 종료되었습니다. **✅ 판정** 탭에서 주문서를 확인하고 통과·실패를 찍어주세요.")
+        st.success(T.t("chat_ended"))
 
     left, right = st.columns([3, 2])
 
@@ -152,15 +188,15 @@ with tab_chat:
                 if h.get("latency_ms"):
                     u = h.get("usage") or {}
                     if u.get("fallback_model"):
-                        st.caption("⚠ %s 과부하 → %s 로 대체 응답"
-                                   % (u["fallback_from"], u["fallback_model"]))
+                        st.caption(T.t("chat_fallback", u["fallback_from"],
+                                       u["fallback_model"]))
                     retries = u.get("retries")
-                    st.caption("%.1f초%s" % (h["latency_ms"] / 1000,
-                                             " · 모델 과부하로 %d회 재시도" % retries if retries else ""))
+                    st.caption(T.t("chat_latency", h["latency_ms"] / 1000,
+                                   T.t("chat_retried", retries) if retries else ""))
                 if h.get("error"):
-                    st.error("LLM 미사용 · 목 모드로 대체됨 — %s" % h["error"])
+                    st.error(T.t("chat_mock", h["error"]))
                     if h.get("raw"):
-                        with st.expander("모델이 실제로 돌려준 원문"):
+                        with st.expander(T.t("chat_raw")):
                             st.code(h["raw"][:3000])
 
         # 처리 전이라도 고객 발화는 즉시 보여준다. 전송됐는지 몰라 다시 누르는 일을 막는다.
@@ -168,22 +204,24 @@ with tab_chat:
             with st.chat_message("user"):
                 st.write(ss.pending["user"])
                 if ss.pending["imgs"]:
-                    st.caption("첨부: " + ", ".join(i["ref"] for i in ss.pending["imgs"]))
+                    st.caption(T.t("chat_attached")
+                               + ", ".join(i["ref"] for i in ss.pending["imgs"]))
             with st.chat_message("assistant"):
-                st.caption("답변 생성 중…")
+                st.caption(T.t("chat_thinking"))
 
         up, prompt = None, None
         if not ss.ended and not ss.pending:
-            up = st.file_uploader("이미지 첨부 (여러 장 가능)", type=["png", "jpg", "jpeg", "webp"],
+            up = st.file_uploader(T.t("chat_upload"), type=["png", "jpg", "jpeg", "webp"],
                                   accept_multiple_files=True, key="up_%d" % len(ss.history))
-            prompt = st.chat_input("고객 발화를 입력하세요")
+            prompt = st.chat_input(T.t("chat_input"))
 
     if prompt:
         new_imgs = []
         for f in up or []:
             ref = "img_%d" % (len(ss.images) + len(new_imgs) + 1)
-            data, mime, note = IMG.prepare(f.getvalue(), f.type or "image/jpeg")
-            new_imgs.append({"ref": ref, "name": f.name, "bytes": data,
+            # 바깥의 data(시트 묶음)를 가리지 않도록 이름을 따로 쓴다
+            img_bytes, mime, note = IMG.prepare(f.getvalue(), f.type or "image/jpeg")
+            new_imgs.append({"ref": ref, "name": f.name, "bytes": img_bytes,
                              "mime": mime, "resize": note})
         ss.pending = {"user": prompt, "imgs": new_imgs}
         st.rerun()
@@ -212,7 +250,8 @@ with tab_chat:
             if upsell:
                 ss.state.upsell_shown += 1
         user = LLM.build_user(prompt, ss.state, CAT, cand, mode,
-                              history=ss.history, pending=pend_before, upsell=upsell)
+                              history=ss.history, pending=pend_before, upsell=upsell,
+                              options_limit=MAX_OPTIONS)
 
         t0 = time.time()
         usage, raw, out, err = {}, "", None, None
@@ -283,7 +322,8 @@ with tab_chat:
         latency_ms = int((time.time() - t0) * 1000)
 
         # 직전에 "각각 몇 개씩" 이라고 물었으면 숫자 하나만 와도 각 품목에 적용한다
-        each_hint = bool(ss.history and "각각 몇 개씩" in (ss.history[-1]["bot"] or ""))
+        each_hint = bool(ss.history
+                         and T.t("qty_each_marker") in (ss.history[-1]["bot"] or ""))
         diff = ss.state.apply(out, turn, CAT, P, each_hint, prompt)
         ss.state.rematch(CAT, P, mode)
         # 지난 턴에 물었는데 이번에도 못 받은 항목을 센다. 무한 되물음을 끊는 근거다.
@@ -311,24 +351,28 @@ with tab_chat:
         gone = ss.state.take_unavailable_notice()
         if gone:
             notes = []
-            miss = [k for k, why in gone if why != "rejected"]
+            miss = [k for k, why in gone if why not in ("rejected", "soldout")]
+            sold = [k for k, why in gone if why == "soldout"]
             drop = [k for k, why in gone if why == "rejected"]
+            def _names(keys):
+                return ", ".join(T.quote_word(RP.spoken(k, P)) for k in keys)
+
             if miss:
-                notes.append("%s 아직 취급하지 않는 상품이에요."
-                             % RP.eun(", ".join("'%s'" % RP.spoken(k) for k in miss)))
+                notes.append(T.t("drop_not_found", T.eun(_names(miss))))
+            if sold:
+                notes.append(T.t("drop_soldout", T.eun(_names(sold))))
             if drop:
-                notes.append("%s 주문에서 뺐어요. 필요하시면 다시 말씀해주세요."
-                             % RP.eul(", ".join("'%s'" % RP.spoken(k) for k in drop)))
-            notes.append("나머지로 도와드릴게요.")
+                notes.append(T.t("drop_rejected", T.eul(_names(drop))))
+            notes.append(T.t("drop_rest"))
             fixed = (" ".join(notes) + "\n" + fixed).strip()
         tail = (out.get("reply") or "").strip() if err is None else ""
 
         # 고객이 주소나 연락처를 먼저 준 경우, 받았다는 말 없이 다음 질문만 하면
         # 보냈는지 아닌지를 알 수 없어 같은 것을 또 보내게 된다.
         # 이번 턴에 새로 채워진 것만 짚는다. 이미 말한 것을 매 턴 반복하지 않기 위해서다.
-        got = [label for label, f in (("성함", ss.state.receiver),
-                                      ("연락처", ss.state.phone),
-                                      ("주소", ss.state.address_base))
+        got = [T.t(key) for key, f in (("got_receiver", ss.state.receiver),
+                                       ("got_phone", ss.state.phone),
+                                       ("got_address", ss.state.address_base))
                if f and f.turn == turn]
 
         # 고객이 흐름에서 벗어난 말을 했으면 그 답은 살린다.
@@ -349,14 +393,14 @@ with tab_chat:
         # LLM 이 묻지 않고 넘어가면 흐름이 멈추므로 그때만 대체 문장을 붙인다.
         pend_after = RP.pending(ss.state, P)
         if kind in ("collecting", "invoice") and not tail:
-            fb = RP.fallback_ask(pend_after)
+            fb = RP.fallback_ask(pend_after, P)
             if fb:
                 fixed = "\n\n".join(x for x in (fixed, fb) if x)
 
         # 확인 인사는 tail 이 최종 확정된 뒤에 판단한다. 먼저 보면, 곧 지워질 tail 때문에
         # 인사를 걸렀다가 결국 받았다는 말을 아무도 하지 않는 턴이 된다.
         if got and not tail:
-            fixed = ("%s 확인했습니다." % RP.eul(", ".join(got)) + "\n" + fixed).strip()
+            fixed = (T.t("got_fields", T.eul(", ".join(got))) + "\n" + fixed).strip()
 
         # 코드가 붙이는 물음이 "무엇을 찾으시냐", "몇 개 필요하냐" 처럼 일반적인 단계에서는,
         # LLM 이 이미 답하며 물었다면 같은 질문이 두 번 나간다. 그때는 코드 문장을 뺀다.
@@ -367,18 +411,21 @@ with tab_chat:
         # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
         # 흐름을 되돌리는 코드 문장이 뒤에 붙어야 자연스럽다.
         order = (tail, fixed) if (digression and tail) else (fixed, tail)
-        bot = "\n\n".join(x for x in order if x) or "(응답 없음)"
+        bot = "\n\n".join(x for x in order if x) or T.t("no_reply")
 
         # 인사는 봇의 첫 발화 맨 앞에. 무엇을 말하든 그 위에 온다.
         if not ss.history:
-            bot = RP.GREETING + "\n" + bot
+            bot = T.t("greeting") + "\n" + bot
 
-        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode)
-        prev_asked = bool(ss.history and "?" in (ss.history[-1]["bot"] or ""))
-        det = FL.detect(bot, ss.state, quote, P, out, prev_asked)
+        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode, bot_text=bot)
+        # 되물었는지는 물음표가 아니라 단계로 본다. 태국어는 물음표 없이 묻는다.
+        prev_asked = bool(ss.history and ss.history[-1].get("asking"))
+        asking = kind in RP.ASK_STAGES or bool(pend_after["missing"] or pend_after["detail"])
+        det = FL.detect(bot, ss.state, quote, P, out, prev_asked, catalog=CAT, asking=asking)
 
         ss.history.append({
             "turn": turn, "user": prompt, "bot": bot, "fixed": fixed, "kind": kind,
+            "asking": asking, "lang": lang, "channel": channel,
             "img_resize": [i["resize"] for i in new_imgs if i.get("resize")],
             "img_refs": [i["ref"] for i in new_imgs], "out": out, "raw": raw, "error": err,
             "diff": diff, "flags": fl, "detect": det, "usage": usage, "model": model,
@@ -391,47 +438,52 @@ with tab_chat:
     with right:
         state = ss.state
         quote = state.quote(CAT, P)
-        fl = FL.evaluate(state, quote, CAT, P, ss.history[-1]["out"] if ss.history else {}, mode)
+        fl = FL.evaluate(state, quote, CAT, P,
+                         ss.history[-1]["out"] if ss.history else {}, mode,
+                         bot_text=ss.history[-1]["bot"] if ss.history else "")
 
-        st.markdown("#### 주문 현황")
+        st.markdown(T.t("panel_order"))
 
         if fl:
             for f in fl:
+                # 값은 코드가 비교하는 제어값이라 그대로 두고, 화면 표기만 옮긴다
                 icon = {"차단": "🛑", "상담원연결": "🙋", "되물음": "❓",
                         "검수필수": "🔍"}.get(f.value, "⚠️")
                 st.markdown("%s **%s** · `%s`  \n<small>%s</small>" %
-                            (icon, f.key, f.value, f.evidence), unsafe_allow_html=True)
+                            (icon, f.key, T.action(f.value), f.evidence),
+                            unsafe_allow_html=True)
         else:
-            st.caption("발생한 플래그 없음")
+            st.caption(T.t("panel_no_flags"))
 
         st.divider()
-        for label, f in (("수령자명", state.receiver), ("전화번호", state.phone)):
+        for key, f in (("panel_receiver", state.receiver), ("panel_phone", state.phone)):
             st.markdown("**%s** %s <small>%s</small>" %
-                        (label, f.value or "—", f.origin), unsafe_allow_html=True)
+                        (T.t(key), f.value or "—", f.origin), unsafe_allow_html=True)
 
-        st.markdown("**주소**")
-        st.markdown("추출: %s <small>%s</small>" %
-                    (state.address_base.value or "—", state.address_base.origin),
-                    unsafe_allow_html=True)
-        st.markdown("상세: %s" % (state.address_detail.value or "—"))
+        st.markdown(T.t("panel_address"))
+        st.markdown(T.t("panel_addr_read", state.address_base.value or "—",
+                        state.address_base.origin), unsafe_allow_html=True)
+        st.markdown(T.t("panel_addr_detail", state.address_detail.value or "—"))
         if state.road_addr:
-            st.markdown("API: %s  \n우편번호: **%s**" % (state.road_addr, state.zipno))
+            st.markdown(T.t("panel_addr_api", state.road_addr, state.zipno))
         elif state.addr_api.get("done"):
-            st.markdown("API: 검색 결과 없음")
+            st.markdown(T.t("panel_addr_none"))
 
         st.divider()
         if quote["rows"]:
-            st.dataframe(pd.DataFrame(quote["rows"]), width="stretch", hide_index=True)
-            st.markdown("소계 **%s원** + 배송비 **%s원** = 합계 **%s**" % (
-                f"{quote['subtotal']:,}", f"{quote['shipping']:,}",
-                f"{quote['total']:,}원" if quote["total"] is not None else "확정 차단"))
+            # 계산에 쓰는 열 이름은 그대로 두고 화면에 보여줄 때만 언어를 입힌다
+            st.dataframe(pd.DataFrame(MSG.display_quote(quote["rows"], lang)),
+                         width="stretch", hide_index=True)
+            st.markdown(T.t("panel_sum", f"{quote['subtotal']:,}", f"{quote['shipping']:,}",
+                            T.money(quote["total"]) if quote["total"] is not None
+                            else T.t("panel_blocked")))
         else:
-            st.caption("담긴 품목 없음")
+            st.caption(T.t("panel_no_items"))
 
         # 대화는 자연스럽게 끝나므로 LLM 은 종료를 알지 못한다. 테스터가 직접 끊는다.
         st.divider()
         if not ss.ended:
-            if st.button("🧾 상담 완료 — 주문서 확정", type="primary", width="stretch",
+            if st.button(T.t("panel_finish"), type="primary", width="stretch",
                          disabled=not ss.history):
                 # 우편번호 검증은 대화 중에 하지 않는다. 확정 시점에 한 번만 조회하고
                 # 실패하면 주문서에 플래그로 남긴다.
@@ -442,71 +494,77 @@ with tab_chat:
                 ss.ended = True
                 st.rerun()
         else:
-            st.info("종료됨 · 판정 탭으로 이동")
+            st.info(T.t("panel_ended"))
 
     # ---------------------------------------------------------- 관찰 패널
     if ss.history:
         h = ss.history[-1]
-        with st.expander("이번 턴 관찰 패널", expanded=False):
+        with st.expander(T.t("panel_observe"), expanded=False):
             c1, c2 = st.columns(2)
             with c1:
-                st.caption("누적 상태 변화")
-                st.write(h["diff"] or "변화 없음")
-                st.caption("자동 감지")
+                st.caption(T.t("panel_diff"))
+                st.write(h["diff"] or T.t("panel_no_diff"))
+                st.caption(T.t("panel_detect"))
                 if h["detect"]:
-                    st.dataframe(pd.DataFrame(h["detect"]), width="stretch",
-                                 hide_index=True)
+                    # code 는 로그용이라 화면에서는 뺀다
+                    st.dataframe(
+                        pd.DataFrame([{T.t("dt_col_hit"): d["감지"],
+                                       T.t("dt_col_rule"): d["근거 규칙"],
+                                       T.t("dt_col_body"): d["내용"]}
+                                      for d in h["detect"]]),
+                        width="stretch", hide_index=True)
                 else:
-                    st.write("없음")
-                st.caption("결핍 로그 (missing_info)")
-                st.write(h["out"].get("missing_info") or "없음")
+                    st.write(T.t("panel_none"))
+                st.caption(T.t("panel_gaps"))
+                st.write(h["out"].get("missing_info") or T.t("panel_none"))
             with c2:
-                st.caption("LLM 원본 응답")
+                st.caption(T.t("panel_llm_raw"))
                 st.json(h["out"], expanded=False)
-                st.caption("참조한 데이터 (used_refs)")
-                st.write(h["out"].get("used_refs") or "없음")
-                st.caption("주소 API")
-                st.write(ss.state.addr_api or "미호출")
-                st.caption("이미지 판별")
-                st.write(ss.state.images or "업로드 없음")
+                st.caption(T.t("panel_used_refs"))
+                st.write(h["out"].get("used_refs") or T.t("panel_none"))
+                st.caption(T.t("panel_addr_api_cap"))
+                st.write(ss.state.addr_api or T.t("panel_addr_api_none"))
+                st.caption(T.t("panel_images"))
+                st.write(ss.state.images or T.t("panel_no_images"))
                 if ss.state.phone_second:
-                    st.caption("전화번호 2차 판독: %s" % ss.state.phone_second)
+                    st.caption(T.t("panel_phone2", ss.state.phone_second))
             u = h["usage"]
-            st.caption("토큰 입력 %s / 출력 %s %s · 모델 %s · 지식수준 %s" % (
-                u.get("input"), u.get("output"),
-                "(추정)" if u.get("estimated") else "", h["model"], mode_label))
+            st.caption(T.t("panel_tokens", u.get("input"), u.get("output"),
+                           T.t("panel_estimated") if u.get("estimated") else "",
+                           h["model"], T.t(dict(MODES)[mode_label])))
 
 
 # ================================================================== 판정
 with tab_verdict:
     if not ss.ended:
-        st.info("대화 탭에서 **상담 완료** 를 눌러야 판정할 수 있습니다.")
+        st.info(T.t("vd_need_finish"))
     else:
         state = ss.state
         quote = state.quote(CAT, P)
-        st.markdown("### 최종 주문서")
+        st.markdown(T.t("vd_title"))
 
         c1, c2 = st.columns([2, 1])
         with c1:
             if quote["rows"]:
-                st.dataframe(pd.DataFrame(quote["rows"]), width="stretch",
-                             hide_index=True)
+                st.dataframe(pd.DataFrame(MSG.display_quote(quote["rows"], lang)),
+                             width="stretch", hide_index=True)
             else:
-                st.caption("품목 없음")
+                st.caption(T.t("vd_no_items"))
         with c2:
             st.write({
-                "수령자명": state.receiver.value or "—",
-                "전화번호": state.phone.value or "—",
-                "주소": state.address_base.value or "—",
-                "상세주소": state.address_detail.value or "—",
-                "우편번호": state.zipno or "—",
-                "합계": f"{quote['total']:,}원" if quote["total"] is not None else "확정 차단",
+                T.t("vd_receiver"): state.receiver.value or "—",
+                T.t("vd_phone"): state.phone.value or "—",
+                T.t("vd_address"): state.address_base.value or "—",
+                T.t("vd_address_detail"): state.address_detail.value or "—",
+                T.t("vd_zip"): state.zipno or "—",
+                T.t("vd_total"): (T.money(quote["total"]) if quote["total"] is not None
+                                  else T.t("panel_blocked")),
             })
 
         hand = HO.build(state, quote, CAT, P, ss.history)
-        st.markdown("### 상담원 인계 메모")
+        st.markdown(T.t("vd_handoff"))
         if hand:
-            st.caption("코드가 상태와 플래그에서 뽑은 것입니다. 상담원이 확정 전에 확인할 목록입니다.")
+            st.caption(T.t("vd_handoff_help"))
             groups = {}
             for kind_, text in hand:
                 groups.setdefault(kind_, []).append(text)
@@ -515,36 +573,38 @@ with tab_verdict:
                 for t in texts:
                     st.markdown("- %s" % t)
         else:
-            st.success("확인할 사항이 없습니다. 그대로 확정하셔도 됩니다.")
+            st.success(T.t("vd_handoff_none"))
 
         st.divider()
-        st.markdown("### 항목별 판정")
-        st.caption("주문서가 자동으로 제대로 입력되었는지 항목별로 찍어주세요. "
-                   "실패라면 원인까지 골라야 무엇을 고쳐야 하는지가 남습니다.")
+        st.markdown(T.t("vd_fields"))
+        st.caption(T.t("vd_fields_help"))
 
+        # 판정 값과 원인 코드는 로그에 그대로 쌓인다. 화면에만 언어를 입힌다
         verdicts = {}
         for key, label in VERDICT_FIELDS:
             col = st.columns([2, 1.4, 2])
             col[0].markdown("**%s**" % label)
             v = col[1].radio(label, ["통과", "실패"], horizontal=True,
+                             format_func=lambda x: T.t("vd_pass" if x == "통과" else "vd_fail"),
                              key="v_%s" % key, label_visibility="collapsed")
-            cause = col[2].selectbox("원인", CAUSE_TAGS, key="c_%s" % key,
-                                     label_visibility="collapsed",
+            cause = col[2].selectbox(T.t("vd_cause"), [c for c, _ in CAUSE_TAGS],
+                                     format_func=lambda c: T.t(dict(CAUSE_TAGS)[c]),
+                                     key="c_%s" % key, label_visibility="collapsed",
                                      disabled=(v == "통과"))
             verdicts[key] = {"verdict": v, "cause": None if v == "통과" else cause}
 
-        note = st.text_area("관찰 메모", placeholder="무엇이 부족했는지, 어떤 지침이 필요한지")
+        note = st.text_area(T.t("vd_note"), placeholder=T.t("vd_note_hint"))
 
         if ss.saved:
-            st.success("판정을 저장했습니다 — %s" % ss.saved)
+            st.success(T.t("vd_saved", ss.saved))
             for kind_, msg in ss.log_msgs:
                 (st.caption if kind_ == "ok" else st.warning)(msg)
-            if st.button("새 대화 시작", type="primary"):
+            if st.button(T.t("vd_new"), type="primary"):
                 ss.saved = None
                 reset_conversation()
                 st.rerun()
 
-        elif st.button("판정 저장", type="primary"):
+        elif st.button(T.t("vd_save"), type="primary"):
             sources = {
                 "invoice": "image" if any(l.source == "image" for l in state.lines) else "text",
                 "address": state.address_base.source or "text",
@@ -566,7 +626,7 @@ with tab_verdict:
 
             rec = {
                 "conversation_id": conv_id, "conv_no": ss.conv_no, "tester": tester,
-                "mode": mode_label, "model": model,
+                "mode": mode_label, "model": model, "lang": lang, "channel": channel,
                 "turns": len(ss.history), "images": len(ss.images),
                 "tokens_in": sum(h["usage"].get("input", 0) or 0 for h in ss.history),
                 "tokens_out": sum(h["usage"].get("output", 0) or 0 for h in ss.history),
@@ -587,19 +647,21 @@ with tab_verdict:
                         verdicts, sources, note, handoff=HO.as_text(hand),
                         policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
                         started_at=ss.started_at, ended_at=now(),
-                        flag_settings={k: r.get("값") for k, r in P.flags.items()})
-                    with st.status("시트에 기록하는 중…", expanded=True) as status:
+                        flag_settings={k: r.get("값") for k, r in P.flags.items()},
+                        lang=lang, channel=channel, app_version=APP_VERSION)
+                    with st.status(T.t("vd_writing"), expanded=True) as status:
                         for tab, rows in bundle.items():
-                            st.write("%s 기록 중…" % tab)
+                            st.write(T.t("vd_writing_tab", tab))
                             ok, msg = LOG.write(tab, rows)
                             msgs.append(("ok" if ok else "err", "%s — %s" % (tab, msg)))
                         LOG.clear_cache()
-                        status.update(label="기록 완료", state="complete", expanded=False)
+                        status.update(label=T.t("vd_written"), state="complete",
+                                      expanded=False)
                 except Exception as e:
                     # 시트 기록이 실패해도 세션 기록은 남는다. 조용히 넘어가지 않는다.
-                    msgs.append(("err", "로그 기록 실패 — %s: %s" % (type(e).__name__, e)))
+                    msgs.append(("err", T.t("vd_log_fail", type(e).__name__, e)))
             else:
-                msgs.append(("err", "로그 미설정 — 이 세션 안에서만 집계됩니다"))
+                msgs.append(("err", T.t("vd_log_off")))
             ss.log_msgs = msgs
 
             ss.conv_no += 1
@@ -607,11 +669,10 @@ with tab_verdict:
 
             # 여기서 다시 그리면 화면이 첫 탭으로 튀어 저장됐는지 알 수 없다.
             # 결과를 이 자리에 그대로 보여준다.
-            st.success("판정을 저장했습니다 — %s" % conv_id)
+            st.success(T.t("vd_saved", conv_id))
             for kind_, msg in msgs:
                 (st.caption if kind_ == "ok" else st.warning)(msg)
-            st.info("이어서 새 대화를 하시려면 위의 **새 대화 시작** 버튼을 눌러주세요. "
-                    "(이 화면을 벗어났다 돌아오면 보입니다)")
+            st.info(T.t("vd_after_save"))
 
 
 # ================================================================== 보고서
@@ -678,20 +739,18 @@ with tab_report:
         recs, log_err = records_from_sheet()
         if log_err or (not recs and ss.records):
             if log_err:
-                st.warning("로그 시트를 읽지 못해 이 세션 기록만 보여줍니다 — %s" % log_err)
+                st.warning(T.t("rp_sheet_fail", log_err))
             else:
-                st.warning("시트에 기록은 됐지만 아직 읽히지 않습니다. 이 세션 기록으로 보여줍니다.")
+                st.warning(T.t("rp_sheet_lag"))
             recs = ss.records
         else:
-            st.caption("로그 시트에서 읽었습니다. 두 테스터의 기록이 함께 집계됩니다.")
+            st.caption(T.t("rp_from_sheet"))
     else:
         recs = ss.records
-        st.warning("Apps Script 로그가 설정되지 않아 **이 브라우저 세션 안에서만** 집계됩니다. "
-                   "새로고침하면 사라지니 아래 CSV 다운로드로 받아두세요.")
+        st.warning(T.t("rp_no_log"))
 
     if not recs:
-        st.info("아직 판정된 대화가 없습니다. **💬 대화** 탭에서 대화를 진행하고 "
-                "**상담 완료 → 판정 저장** 을 하면 여기에 집계됩니다.")
+        st.info(T.t("rp_empty"))
     else:
         tin = sum(_num(r["tokens_in"]) for r in recs)
         tout = sum(_num(r["tokens_out"]) for r in recs)
@@ -699,55 +758,56 @@ with tab_report:
                    for r in recs)
 
         c = st.columns(5)
-        c[0].metric("테스트한 대화", "%d건" % len(recs))
-        c[1].metric("LLM 호출", "%d회" % sum(_num(r["turns"]) for r in recs))
-        c[2].metric("업로드 이미지", "%d장" % sum(_num(r["images"]) for r in recs))
-        c[3].metric("토큰 (추정)", f"{tin + tout:,}",
-                    "입력 %s / 출력 %s" % (f"{tin:,}", f"{tout:,}"))
+        c[0].metric(T.t("rp_conversations"), "%d" % len(recs))
+        c[1].metric(T.t("rp_calls"), "%d" % sum(_num(r["turns"]) for r in recs))
+        c[2].metric(T.t("rp_images"), "%d" % sum(_num(r["images"]) for r in recs))
+        c[3].metric(T.t("rp_tokens"), f"{tin + tout:,}",
+                    T.t("rp_tokens_delta", f"{tin:,}", f"{tout:,}"))
         # 총액보다 "대화 1건당 얼마"가 자체 구축 판단의 실제 근거다.
         per = cost / len(recs)
-        c[4].metric("예상 비용", "%s원" % f"{int(cost * KRW):,}",
-                    "대화 1건당 %s원" % f"{int(per * KRW):,}")
-        st.caption("환율 %s원/$ 기준 · 상담 1만 건 환산 시 약 %s원"
-                   % (f"{KRW:,}", f"{int(per * KRW * 10000):,}"))
+        c[4].metric(T.t("rp_cost"), T.money(int(cost * KRW)),
+                    T.t("rp_cost_delta", f"{int(per * KRW):,}"))
+        st.caption(T.t("rp_cost_note", f"{KRW:,}", f"{int(per * KRW * 10000):,}"))
 
         lat = [_num(r.get("latency_avg")) for r in recs if _num(r.get("latency_avg"))]
         if lat:
             mx = max(_num(r.get("latency_max")) for r in recs)
-            st.caption("응답 시간 — 평균 %.1f초 · 최대 %.1f초 (자체 구축 시 체감 속도의 실측값)"
-                       % (sum(lat) / len(lat) / 1000, mx / 1000))
+            st.caption(T.t("rp_latency", sum(lat) / len(lat) / 1000, mx / 1000))
 
         st.divider()
-        st.markdown("### 항목별 성공률")
+        st.markdown(T.t("rp_by_field"))
         rows = []
         for key, label in VERDICT_FIELDS:
             ok = sum(1 for r in recs if r["verdicts"][key]["verdict"] == "통과")
-            rows.append({"항목": label, "통과": ok, "실패": len(recs) - ok,
-                         "성공률": "%.0f%%" % (100 * ok / len(recs))})
+            rows.append({T.t("rp_col_field"): label, T.t("rp_col_pass"): ok,
+                         T.t("rp_col_fail"): len(recs) - ok,
+                         T.t("rp_col_rate"): "%.0f%%" % (100 * ok / len(recs))})
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
         st.divider()
-        st.markdown("### 입력 유형별 성공률")
-        st.caption("같은 항목이라도 텍스트에서 왔는지 이미지에서 왔는지에 따라 난이도가 다릅니다.")
+        st.markdown(T.t("rp_by_source"))
+        st.caption(T.t("rp_by_source_help"))
         cross = []
         for key, label in VERDICT_FIELDS:
-            for src, src_label in (("text", "텍스트"), ("image", "이미지")):
+            for src, src_key in (("text", "rp_src_text"), ("image", "rp_src_image")):
                 sub = [r for r in recs if r["sources"][key] == src]
                 if not sub:
                     continue
                 ok = sum(1 for r in sub if r["verdicts"][key]["verdict"] == "통과")
-                cross.append({"항목": label, "입력 유형": src_label, "건수": len(sub),
-                              "통과": ok, "실패": len(sub) - ok,
-                              "성공률": "%.0f%%" % (100 * ok / len(sub))})
+                cross.append({T.t("rp_col_field"): label,
+                              T.t("rp_col_source"): T.t(src_key),
+                              T.t("rp_col_count"): len(sub),
+                              T.t("rp_col_pass"): ok, T.t("rp_col_fail"): len(sub) - ok,
+                              T.t("rp_col_rate"): "%.0f%%" % (100 * ok / len(sub))})
         if cross:
             st.dataframe(pd.DataFrame(cross), width="stretch", hide_index=True)
         else:
-            st.caption("데이터 없음")
+            st.caption(T.t("rp_no_data"))
 
         st.divider()
         cc = st.columns(2)
         with cc[0]:
-            st.markdown("### 실패 원인 순위")
+            st.markdown(T.t("rp_causes"))
             causes = {}
             for r in recs:
                 for key, _ in VERDICT_FIELDS:
@@ -755,64 +815,73 @@ with tab_report:
                     if cz:
                         causes[cz] = causes.get(cz, 0) + 1
             if causes:
+                # 저장된 값은 원인 코드다. 화면에서만 언어를 입힌다
+                label_of = dict(CAUSE_TAGS)
                 st.dataframe(pd.DataFrame(
-                    [{"원인": k, "건수": v} for k, v in sorted(causes.items(), key=lambda x: -x[1])]),
+                    [{T.t("rp_col_cause"): T.t(label_of[k]) if k in label_of else k,
+                      T.t("rp_col_count"): v}
+                     for k, v in sorted(causes.items(), key=lambda x: -x[1])]),
                     width="stretch", hide_index=True)
             else:
-                st.caption("실패 없음")
+                st.caption(T.t("rp_no_fail"))
 
         with cc[1]:
-            st.markdown("### 지식 수준 모드별 비교")
+            st.markdown(T.t("rp_by_mode"))
             mrows = []
-            for md in ("전체", "축소"):
+            for md, md_key in MODES:
                 sub = [r for r in recs if r["mode"] == md]
                 if not sub:
                     continue
                 total = len(sub) * len(VERDICT_FIELDS)
                 ok = sum(1 for r in sub for k, _ in VERDICT_FIELDS
                          if r["verdicts"][k]["verdict"] == "통과")
-                mrows.append({"모드": md, "대화": len(sub),
-                              "전체 성공률": "%.0f%%" % (100 * ok / total)})
+                mrows.append({T.t("rp_col_mode"): T.t(md_key),
+                              T.t("rp_col_conv"): len(sub),
+                              T.t("rp_col_all_rate"): "%.0f%%" % (100 * ok / total)})
             if mrows:
                 st.dataframe(pd.DataFrame(mrows), width="stretch", hide_index=True)
             else:
-                st.caption("데이터 없음")
+                st.caption(T.t("rp_no_data"))
 
         st.divider()
-        st.markdown("### 남긴 메모")
+        st.markdown(T.t("rp_notes"))
         for r in recs:
             if r["note"]:
                 # 세션 기록은 번호, 시트 기록은 대화 ID 라 형식을 숫자로 고정하면 안 된다
                 st.markdown("- **%s · %s (%s)** — %s" %
                             (r["conv_no"], r["tester"], r["mode"], r["note"]))
 
-        st.download_button("결과 CSV 다운로드",
+        st.download_button(T.t("rp_download"),
                            pd.json_normalize(recs).to_csv(index=False).encode("utf-8-sig"),
                            "momo_test_results.csv", "text/csv")
 
 
 # ================================================================== 데이터
 with tab_data:
-    st.caption("시트 수정이 반영됐는지 확인하는 화면입니다. 실험 결과와는 무관합니다.")
+    st.caption(T.t("dt_caption"))
 
     cols = st.columns(len(data))
     for col, (name, df) in zip(cols, data.items()):
-        col.metric(name, "%d행" % len(df), origins[name])
+        col.metric(name, "%d" % len(df), origins[name])
 
-    with st.expander("지침 DB", expanded=False):
+    with st.expander(T.t("dt_policies"), expanded=False):
         for w in P.validate():
             st.warning(w)
         st.dataframe(P.summary(), width="stretch", hide_index=True)
 
-    with st.expander("유사어 충돌 — AMBIGUOUS_ALIAS 가 떠야 할 지점", expanded=False):
+    with st.expander(T.t("dt_collision"), expanded=False):
         syn, master = data["synonyms"], data["master_products"]
+        # 유사어는 언어 축이다. 언어를 섞어 세면 없는 충돌이 보인다
+        if "lang" in syn.columns:
+            syn = syn[syn["lang"].astype(str).str.strip().str.lower() == lang]
         name_of = dict(zip(master["item_code"],
                            master.get("canonical_name", master["item_code"])))
         grouped = syn.groupby("synonym")["item_code"].apply(lambda s: sorted(set(s)))
         collide = grouped[grouped.apply(len) > 1]
         if len(collide):
             st.dataframe(pd.DataFrame([
-                {"표현": a, "걸리는 상품": " ↔ ".join("%s %s" % (c, name_of.get(c, "")) for c in cs)}
+                {T.t("dt_col_expr"): a,
+                 T.t("dt_col_items"): " ↔ ".join("%s %s" % (c, name_of.get(c, "")) for c in cs)}
                 for a, cs in collide.items()]), width="stretch", hide_index=True)
         else:
-            st.write("없음")
+            st.write(T.t("dt_none"))

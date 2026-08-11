@@ -12,71 +12,45 @@
 고객이 중간에 다른 질문으로 새더라도, 코드가 만드는 문장은 언제나
 "지금 이 흐름에서 다음에 필요한 것"이다. LLM 이 딴 얘기에 답하더라도
 그 뒤에 이 문장이 따라붙으므로 대화가 자연스럽게 제자리로 돌아온다.
+
+문장 자체는 messages.py 의 언어별 표에서 가져온다. 세션 언어는 Policies 가 들고 있다.
 """
-import difflib
 import re
 
 from . import matching as M
-
-GREETING = "안녕하세요 고객님!"
+from . import messages as MSG
 
 # 지침의 REQUIRED_FIELDS 값을 상태 필드와 화면 문구로 옮기는 표.
 # 흐름의 순서는 코드가 강제하고, 무엇을 필수로 볼지는 지침이 정한다.
+# 왼쪽 토큰은 제어값이라 번역하지 않는다. 오른쪽은 문구표의 키다.
 FIELD_ALIASES = {
-    "수령인": ("receiver", "받으실 분 성함"),
-    "전화": ("phone", "연락처"),
-    "주소": ("address_base", "배송지 주소"),
+    "수령인": ("receiver", "field_receiver"),
+    "전화": ("phone", "field_phone"),
+    "주소": ("address_base", "field_address"),
 }
 DEFAULT_REQUIRED = "수령인,전화,주소"
 
 # 품목이 아직 확정되지 않아 코드가 되묻고 있는 단계.
 # 이때는 다른 것을 함께 묻지 않는다. 한 턴에 질문은 하나여야 한다.
-ASK_STAGES = {"order_ask", "ambiguous_ask", "reject_ask",
+ASK_STAGES = {"order_ask", "ambiguous_ask", "reject_ask", "soldout_ask",
               "notfound_ask", "quantity_ask", "blocked"}
 
 
-def won(n):
-    return "%s원" % f"{int(n):,}"
+def msg(policies):
+    return MSG.for_lang(getattr(policies, "lang", MSG.DEFAULT_LANG))
 
 
-# 숫자를 소리 내어 읽었을 때 받침이 있는지. 영/일/삼/육/칠/팔 은 있고 이/사/오/구 는 없다.
-_DIGIT_BATCHIM = {"0": True, "1": True, "3": True, "6": True, "7": True, "8": True,
-                  "2": False, "4": False, "5": False, "9": False}
+def won(n, policies=None):
+    return msg(policies).money(n)
 
 
-def _has_batchim(word):
-    w = str(word or "").rstrip("'\"), ]}").strip()
-    if not w:
-        return False
-    ch = w[-1]
-    if "가" <= ch <= "힣":
-        return (ord(ch) - 0xAC00) % 28 != 0
-    if ch.isdigit():
-        return _DIGIT_BATCHIM.get(ch, False)
-    if ch.isalpha():
-        # 영문은 소리 기준. 자음으로 끝나면 받침이 있는 것으로 본다
-        return ch.lower() not in "aeiou"
-    return False
+def spoken(expr, policies=None):
+    """고객에게 되읊을 표현. 내부 품목코드는 지운다.
+    코드는 우리 식별자일 뿐이고, 고객은 그게 무엇인지 모른다."""
+    return MSG.strip_code(expr, getattr(policies, "lang", MSG.DEFAULT_LANG))
 
 
-def josa(word, with_batchim, without):
-    """'삼겹살는' 같은 어색한 조사를 막는다. 상품명은 시트에서 오므로 받침을 미리 알 수 없다."""
-    return with_batchim if _has_batchim(word) else without
-
-
-def eun(word):
-    return word + josa(word, "은", "는")
-
-
-def i_ga(word):
-    return word + josa(word, "이", "가")
-
-
-def eul(word):
-    return word + josa(word, "을", "를")
-
-
-def called(line, catalog):
+def called(line, catalog, policies=None):
     """고객에게 그 품목을 뭐라고 부를지.
 
     이미 어느 상품인지 확정됐으면 상품명으로 부른다.
@@ -84,15 +58,7 @@ def called(line, catalog):
     코드가 노출되거나 코드를 지운 빈 문자열이 남는다."""
     if line.match and line.match.status == M.CONFIRMED and line.match.code:
         return catalog.display(line.match.code)
-    return spoken(line.key)
-
-
-def spoken(expr):
-    """고객에게 되읊을 표현. 내부 품목코드는 지운다.
-    코드는 우리 식별자일 뿐이고, 고객은 그게 무엇인지 모른다."""
-    cleaned = re.sub(r"\b[A-Za-z]\d{3,}\b", "", str(expr or ""))
-    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,-")
-    return cleaned or "말씀하신 상품"
+    return spoken(line.key, policies)
 
 
 def nearest(expr, catalog, top=3):
@@ -105,17 +71,20 @@ def invoice_sig(quote):
     return tuple(sorted((r["매칭"], r["수량"]) for r in quote["rows"])) + (quote["total"],)
 
 
-def required_fields(policies):
+def required_fields(policies, T=None):
+    """T 를 넘기면 그 언어의 항목 이름을 쓴다. 인계 메모는 개발자 언어를 쓰기 때문이다."""
     raw = str(policies.get("REQUIRED_FIELDS", DEFAULT_REQUIRED) or DEFAULT_REQUIRED)
+    T = T or msg(policies)
     out = []
     for token in raw.split(","):
         pair = FIELD_ALIASES.get(token.strip())
         if pair:
-            out.append(pair)
-    return out or [FIELD_ALIASES[k] for k in ("수령인", "전화", "주소")]
+            out.append((pair[0], T.t(pair[1])))
+    return out or [(a, T.t(k)) for a, k in
+                   (FIELD_ALIASES[x] for x in ("수령인", "전화", "주소"))]
 
 
-def missing_required(state, policies):
+def missing_required(state, policies, T=None):
     """매 턴 다시 계산한다. 고객이 순서와 무관하게 정보를 주더라도
     이미 받은 것은 묻지 않고 아직 없는 것만 묻기 위해서다.
 
@@ -123,18 +92,18 @@ def missing_required(state, policies):
     계속 물으면 대화가 끝나지 않고, 고객은 같은 질문만 듣는다.
     빠진 채로 남는 것은 플래그로 드러나 상담원이 처리한다."""
     limit = policies.get_int("ASK_RETRY_LIMIT", 2)
-    return [(k, label) for k, label in required_fields(policies)
+    return [(k, label) for k, label in required_fields(policies, T)
             if not getattr(state, k) and state.ask_rounds.get(k, 0) < limit]
 
 
-def given_up(state, policies):
+def given_up(state, policies, T=None):
     """묻기를 포기한 필수 항목. 상담원이 채워야 하는 목록이다."""
     limit = policies.get_int("ASK_RETRY_LIMIT", 2)
-    return [label for k, label in required_fields(policies)
+    return [label for k, label in required_fields(policies, T)
             if not getattr(state, k) and state.ask_rounds.get(k, 0) >= limit]
 
 
-def build(state, quote, catalog, policies, history):
+def build(state, quote, catalog, policies, history=None):
     """반환값은 (고정 문장, 종류). 인사는 여기서 붙이지 않는다.
     잡담 답변이 앞에 오는 경우가 있어, 조립이 끝난 뒤 맨 앞에 붙여야 한다."""
     return _body(state, quote, catalog, policies, history)
@@ -155,9 +124,12 @@ def stage(state, quote, catalog, policies):
 
 
 # 고객이 물음표 없이 묻는 일이 잦아, 어미도 같이 본다.
+# 태국어는 물음표를 거의 쓰지 않고 ไหม/มั้ย/หรือ/คะ 로 묻는다.
 _QUESTION_TAIL = re.compile(
     r"(없나요|없어요|없을까요|있나요|있을까요|되나요|될까요|맞나요|"
-    r"어때요|어떤가요|뭐예요|뭔가요|무엇인가요|알려주세요|궁금)")
+    r"어때요|어떤가요|뭐예요|뭔가요|무엇인가요|알려주세요|궁금|"
+    r"ไหม|มั้ย|หรือเปล่า|รึเปล่า|อะไร|เท่าไหร่|เท่าไร|ยังไง|อย่างไร|กี่|"
+    r"ได้ไหม|มีไหม|คะ$)")
 
 
 def asked_question(text):
@@ -176,27 +148,100 @@ def _asked_before(history, phrase):
     return any(phrase in (h.get("bot") or "") for h in (history or []))
 
 
+def options_text(codes, catalog, policies):
+    """후보를 가격과 함께 늘어놓는다. 후보 자체는 부르는 쪽에서 이미 잘라 왔다."""
+    T = msg(policies)
+    return " / ".join("%s %s" % (catalog.display(c), T.money(catalog.price(c) or 0))
+                      for c in codes)
+
+
+def _attr_question(codes, catalog, policies, limit=5):
+    """후보가 너무 많을 때 한 단계 먼저 좁히는 질문.
+
+    종류(species)와 부위(part)는 마스터에 이미 있는데 코드가 안 쓰고 있었다.
+    후보 100개를 가격과 함께 늘어놓는 것보다 "돼지, 소, 닭 중 어느 쪽일까요?" 가
+    고객에게도 우리에게도 빠르다."""
+    T = msg(policies)
+    for col, key in (("species", "attr_species"), ("part", "attr_part")):
+        vals = []
+        for c in codes:
+            v = str(catalog.items.get(c, {}).get(col) or "").strip()
+            if v and v not in vals:
+                vals.append(v)
+        if len(vals) > 1:
+            return T.t(key, ", ".join(vals[:limit]))
+    return None
+
+
+def ambiguous_ask(line, catalog, policies):
+    """모호한 품목을 되묻는 문장. 후보 수에 따라 묻는 방식이 달라진다.
+
+    상한이 없으면 후보 20개에서 353자짜리 가격표가 나간다.
+    품목 1,000개에서는 대화 자체가 불가능해진다."""
+    T = msg(policies)
+    max_opts = policies.get_int("AMBIGUOUS_MAX_OPTIONS", 5) or 5
+    attr_th = policies.get_int("AMBIGUOUS_ATTR_THRESHOLD", 20) or 20
+    codes = catalog.by_rank(line.match.candidates)
+    name = T.eun(T.quote_word(spoken(line.key, policies)))
+
+    if len(codes) > attr_th:
+        q = _attr_question(codes, catalog, policies)
+        if q:
+            return T.t("ambiguous_attr", name, q)
+
+    # 후보가 상한을 넘으면 나열하지 않고 제일 많이 나가는 하나를 권한다.
+    # 고객이 아니라고 하면 그때 상위 N 개를 보여준다.
+    if len(codes) > max_opts and not line.top_offer_declined:
+        top = codes[0]
+        return T.t("ambiguous_top", name, catalog.display(top),
+                   T.money(catalog.price(top) or 0))
+
+    return T.t("ambiguous_list", name, options_text(codes[:max_opts], catalog, policies))
+
+
+def pack_ask(line, catalog, policies):
+    """포장단위로 딱 떨어지지 않는 수량을 되묻는 문장.
+
+    "몇 개 필요하신가요?" 로는 고객이 왜 다시 답해야 하는지 모른다.
+    포장단위가 얼마인지와 고를 수 있는 개수를 함께 알려준다."""
+    T = msg(policies)
+    code = line.match.code if (line.match and line.match.status == M.CONFIRMED) else None
+    pack = catalog.unit(code) if code else ""
+    name = T.eun(called(line, catalog, policies))
+    opts = line.pack_options
+
+    def label(n):
+        return catalog.units.pack_label(n, pack) or "%d" % n
+
+    if len(opts) > 1:
+        return T.t("pack_ask_two", name, pack, opts[0], label(opts[0]),
+                   opts[1], label(opts[1]))
+    return T.t("pack_ask_one", name, pack, opts[0], label(opts[0]))
+
+
 def _body(state, quote, catalog, policies, history=None):
     """우선순위가 있다. 모호한 항목이 남아 있는데 거래명세서를 먼저 내밀면
     고객이 잘못된 상품으로 입금한다. 되물음이 항상 앞선다."""
+    T = msg(policies)
     # 취급하지 않는다고 판정된 줄은 되묻지 않는다. 알릴 문구는 앱이 앞에 붙인다.
     lines = [l for l in state.lines if not l.unavailable]
 
     # ---------------------------------------------------------- 1단계 주문 수집
     for l in lines:
         if l.rejected and l.alternatives:
-            opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
-                              for c in l.alternatives)
-            return ("말씀하신 %s %s 중 어떤 것일까요?"
-                    % (eun("'%s'" % spoken(l.key)), opts), "reject_ask")
+            return (T.t("reject_ask", T.eun(T.quote_word(spoken(l.key, policies))),
+                        options_text(l.alternatives, catalog, policies)), "reject_ask")
+
+    # 품절은 재고 문제라 다시 들어온다. 없다고 끝내지 말고 같은 부위의 대체를 권한다
+    for l in lines:
+        if l.soldout_alts:
+            return (T.t("soldout_ask", T.eun(called(l, catalog, policies)),
+                        options_text(l.soldout_alts, catalog, policies)), "soldout_ask")
 
     if policies.get("AMBIGUOUS_ALIAS") == "되물음":
         for l in lines:
             if l.match and l.match.status == M.AMBIGUOUS:
-                opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
-                                  for c in l.match.candidates)
-                return ("%s %s 중 어떤 것을 말씀하시는 걸까요?"
-                        % (eun("'%s'" % spoken(l.key)), opts), "ambiguous_ask")
+                return (ambiguous_ask(l, catalog, policies), "ambiguous_ask")
 
     # DB 에 없는 표현 — "못 찾았다"로 끝내지 않고 가장 가까운 상품을 들이민다.
     # 되물음은 대화를 끝내는 것이 아니라 거래명세서를 완성하려고 정보를 채우는 과정이다.
@@ -204,14 +249,11 @@ def _body(state, quote, catalog, policies, history=None):
         for l in lines:
             if l.match and l.match.status == M.NOT_FOUND:
                 near = nearest(l.key, catalog)
+                name = T.quote_word(spoken(l.key, policies))
                 if near:
-                    opts = " / ".join("%s %s" % (catalog.display(c), won(catalog.price(c) or 0))
-                                      for c in near)
-                    return ("%s 이 중 어떤 것일까요? %s\n"
-                            "이 중에 없으면 사진 보내주시면 찾아드릴게요."
-                            % (eun("'%s'" % spoken(l.key)), opts), "notfound_ask")
-                return ("%s 어떤 상품인지 조금만 더 알려주시겠어요? 사진을 보내주셔도 좋아요."
-                        % i_ga("'%s'" % spoken(l.key)), "notfound_ask")
+                    return (T.t("notfound_near", T.eun(name),
+                                options_text(near, catalog, policies)), "notfound_ask")
+                return (T.t("notfound_bare", T.i_ga(name)), "notfound_ask")
 
     if not lines:
         # 이미 사진을 보낸 고객에게 사진을 보내라고 하면 대화가 막힌다.
@@ -219,29 +261,32 @@ def _body(state, quote, catalog, policies, history=None):
         # 다만 주소 사진을 보낸 고객에게 "상품을 못 찾았다"고 하면 엉뚱한 말이 된다.
         # 상품 사진을 보냈는데 못 읽은 경우에만 그렇게 말한다.
         if any(i.get("kind") == "product" for i in state.images or []):
-            return ("보내주신 사진에서 상품을 확인하지 못했어요. "
-                    "상품명을 알려주시거나 라벨이 보이게 다시 찍어주시면 담아드릴게요.",
-                    "order_ask")
-        return ("어떤 상품 찾으세요? 상품명을 말씀해주시거나 사진을 보내주시면 담아드릴게요.",
-                "order_ask")
+            return (T.t("order_ask_image"), "order_ask")
+        return (T.t("order_ask"), "order_ask")
+
+    # 포장단위에 안 맞는 수량도 결국 수량 미확정이다. 새 단계를 만들지 않고
+    # 지금 있는 되물음 자리로 보낸다. 올려서 더 청구하는 대신 고객이 고르게 한다.
+    for l in lines:
+        if l.pack_options:
+            return (pack_ask(l, catalog, policies), "quantity_ask")
 
     no_qty = [l for l in lines if l.quantity is None]
     if no_qty:
-        names = ", ".join(called(l, catalog) for l in no_qty)
+        names = ", ".join(called(l, catalog, policies) for l in no_qty)
         if len(no_qty) > 1:
-            ask = "%s 각각 몇 개씩 필요하신가요?" % names
+            ask = T.t("qty_ask_each", names)
             # 같은 질문을 이미 했는데 또 물어야 한다면 답하는 법을 예시로 보여준다.
             # 숫자 하나만 답하면 어느 품목인지 알 수 없어 계속 되묻게 된다.
-            if _asked_before(history, "몇 개"):
-                ask += "\n(예: %s 처럼 알려주세요)" % ", ".join(
-                    "%s %d개" % (called(l, catalog), i + 1) for i, l in enumerate(no_qty))
+            if _asked_before(history, T.t("qty_marker")):
+                ask += T.t("qty_ask_example", ", ".join(
+                    T.t("qty_example_item", called(l, catalog, policies), i + 1)
+                    for i, l in enumerate(no_qty)))
             return (ask, "quantity_ask")
-        return ("%s 몇 개 필요하신가요?" % eun(names), "quantity_ask")
+        return (T.t("qty_ask_one", T.eun(names)), "quantity_ask")
 
     if quote["blocked"]:
         miss = [r["표현"] for r in quote["rows"] if r["단가"] is None]
-        return ("%s 가격을 확인하고 있어요. 확인되는 대로 총액 알려드릴게요."
-                % ", ".join(miss), "blocked")
+        return (T.t("blocked", ", ".join(miss)), "blocked")
 
     # ---------------------------------------------------------- 2단계 거래명세서
     out = []
@@ -257,7 +302,7 @@ def _body(state, quote, catalog, policies, history=None):
     # 정보 요청은 환각 위험이 없어 자연스러운 표현을 맡기는 편이 낫다.
     if state.payment_proof:
         # 입금 확인은 사람이 은행에서 한다. 코드도 LLM 도 확인됐다고 말하지 않는다.
-        out.append("입금증 받았습니다.")
+        out.append(T.t("payment_proof"))
 
     pend = pending(state, policies)
     if not (pend["missing"] or pend["detail"]):
@@ -266,8 +311,8 @@ def _body(state, quote, catalog, policies, history=None):
             state.done_shown = True
             gave = given_up(state, policies)
             if gave:
-                out.append("%s 확인이 어려워 담당자가 따로 확인드릴게요." % eun(", ".join(gave)))
-            out.append("주문 감사합니다! 확인하는 대로 바로 보내드릴게요.")
+                out.append(T.t("given_up", T.eun(", ".join(gave))))
+            out.append(T.t("done"))
         return ("\n\n".join(out), "complete")
 
     return ("\n\n".join(out), "invoice" if show_invoice else "collecting")
@@ -286,38 +331,58 @@ def pending(state, policies):
             "keys": [k for k, _ in missing_required(state, policies)]}
 
 
-def fallback_ask(pend):
+def fallback_ask(pend, policies=None):
     """LLM 이 아무것도 묻지 않았을 때만 쓰는 안전망. 흐름이 멈추지 않게 한다."""
+    T = msg(policies)
     if pend["missing"]:
-        return "%s 알려주시겠어요?" % eul(", ".join(pend["missing"]))
+        return T.t("ask_missing", T.eul(", ".join(pend["missing"])))
     if pend["detail"]:
-        return "동·호수도 알려주시면 배송이 더 정확해요."
+        # 동·호를 전제하지 않는다. 실제 배송지 10건 중 동·호 형식은 1건뿐이고
+        # 나머지는 기숙사·농장·비닐하우스·컨테이너다. 동·호를 물으면 그 고객은
+        # 영원히 답할 수 없고, 실제로 그 실패가 결핍 로그에 남아 있다.
+        return T.t("ask_detail")
     return ""
 
 
 def _invoice_text(quote, policies):
+    T = msg(policies)
     out = []
     for r in quote["rows"]:
         # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
         pack = (r.get("포장단위") or "").strip()
         name = "%s %s" % (r["매칭"], pack) if pack else r["매칭"]
-        line = "%s %d개 %s" % (name, r["수량"], won(r["소계"]))
+        line = T.t("invoice_line", name, r["수량"], T.money(r["소계"]))
         note = (r.get("요청") or "").strip()
         if note and "→" in note:
             # 요청한 무게와 실제 나가는 양이 다르면 숨기지 않고 적는다
             line += "  (%s)" % note
         out.append(line)
 
-    threshold = policies.get_int("FREE_SHIPPING_THRESHOLD", 0)
-    if quote["shipping"]:
-        out.append("배송비 %s" % won(quote["shipping"]))
-    elif threshold:
-        out.append("배송비 0원 (%s 이상 무료배송)" % won(threshold))
+    # 배송유형이 갈리면 유형별로 나눠 적는다. 총액만 맞으면 고객은 왜 비싼지 모른다
+    ship_rows = [r for r in (quote.get("shipping_rows") or []) if r.get("ship_type")]
+    if len(ship_rows) > 1:
+        for r in ship_rows:
+            st = T.ship_type(r["ship_type"])
+            if r["fee"]:
+                out.append(T.t("ship_fee_typed", st, T.money(r["fee"])))
+            elif r["threshold"]:
+                out.append(T.t("ship_free_typed", st, T.money(r["threshold"])))
+        if quote.get("shipping_rule") == "최대" and \
+                sum(r["fee"] for r in ship_rows) != quote["shipping"]:
+            out.append(T.t("ship_max_only", T.money(quote["shipping"])))
+    elif quote["shipping"]:
+        out.append(T.t("ship_fee", T.money(quote["shipping"])))
+    else:
+        threshold = (ship_rows[0]["threshold"] if ship_rows
+                     else policies.get_int("FREE_SHIPPING_THRESHOLD", 0))
+        if threshold:
+            out.append(T.t("ship_free", T.money(threshold)))
 
-    out.append("총 %s을 아래 계좌로 입금주시면 감사하겠습니다." % won(quote["total"]))
+    out.append(T.t("invoice_total", T.eul(T.money(quote["total"]))))
     account = policies.get("ACCOUNT_INFO", "")
     if account:
-        out.append(account)
+        # 계좌번호는 고객이 은행 앱에 그대로 입력한다. 어느 언어에서도 그대로 둔다
+        out.append(str(account).strip())
     return "\n".join(out)
 
 
@@ -334,7 +399,12 @@ def upsell_context(quote, policies, catalog, exclude=(), top=3):
     if not quote["rows"] or not quote["subtotal"]:
         return None
 
+    # 배송유형이 하나뿐이면 그 유형의 기준을 쓴다. 유형이 섞였으면 어느 쪽 기준으로
+    # 권하는 것인지 말할 수 없으므로 지침의 공통 기준으로 둔다.
     threshold = policies.get_int("FREE_SHIPPING_THRESHOLD", 0)
+    srows = quote.get("shipping_rows") or []
+    if len(srows) == 1 and srows[0].get("threshold"):
+        threshold = srows[0]["threshold"]
     if not threshold or quote["total"] is None or quote["shipping"] == 0:
         return None
 
@@ -343,7 +413,7 @@ def upsell_context(quote, policies, catalog, exclude=(), top=3):
         return None
 
     priced = [(c, catalog.price(c)) for c in catalog.items
-              if catalog.price(c) and c not in exclude]
+              if catalog.price(c) and c not in exclude and not catalog.soldout(c)]
     # 하나만 더 담아도 기준을 넘기는 상품을 싼 순으로. 없으면 비싼 순으로 보여준다.
     over = sorted([x for x in priced if x[1] >= gap], key=lambda x: x[1])[:top]
     if not over:

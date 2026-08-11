@@ -58,6 +58,11 @@ RESPONSE_SCHEMA = {
                     "label_code": _NULLABLE_STR,
                     "printed_name": _NULLABLE_STR,
                     "chosen_code": _NULLABLE_STR,
+                    # 거부·지시대명사 판정을 언어에 매이지 않게 하는 근거.
+                    # 코드는 이 문자열이 고객 발화에 실제로 들어 있는지만 본다.
+                    "reject_evidence": _NULLABLE_STR,
+                    "is_reference": {"type": "boolean", "nullable": True},
+                    "reference_evidence": _NULLABLE_STR,
                     "source": _NULLABLE_STR,
                     "source_ref": _NULLABLE_STR,
                 },
@@ -75,6 +80,11 @@ RESPONSE_SCHEMA = {
                            "complaint", "smalltalk", "other"]),
         "handoff_request": {"type": "boolean"},
         "angry": {"type": "boolean"},
+        # 고객 질문에 답했는지, 취급하지 않는다고 말했는지를 코드가 검사하기 위한 필드.
+        # 한국어 정규식으로 잡으면 다른 언어에서는 아무것도 못 잡는다.
+        "customer_question": _NULLABLE_STR,
+        "question_answered": {"type": "boolean", "nullable": True},
+        "unavailable_claim": _NULLABLE_STR,
         "missing_info": {"type": "array", "items": {"type": "object", "properties": {
             "asked": _NULLABLE_STR, "needed": _NULLABLE_STR,
             "found": {"type": "boolean", "nullable": True}}}},
@@ -96,7 +106,8 @@ OUTPUT_CONTRACT = """\
   "item_ops": [
     {"op":"add|update|remove|reject|choose","raw_text":"뒷다리 3개","name_hint":"뒷다리",
      "quantity":3,"unit_expr":"개","label_code":null,"printed_name":null,
-     "chosen_code":null,"source":"text|image","source_ref":"turn_3|img_2"}
+     "chosen_code":null,"reject_evidence":null,"is_reference":false,
+     "reference_evidence":null,"source":"text|image","source_ref":"turn_3|img_2"}
   ],
   "receiver": {"value":"홍길동","source":"text","source_ref":"turn_2"},
   "phone": null,
@@ -105,6 +116,9 @@ OUTPUT_CONTRACT = """\
   "intent": "order|question|payment_claim|info_provide|complaint|smalltalk|other",
   "handoff_request": false,
   "angry": false,
+  "customer_question": "이번 턴에 고객이 물은 문장 그대로. 묻지 않았으면 null",
+  "question_answered": true,
+  "unavailable_claim": "reply 에서 취급하지 않는다고 말한 상품명. 그런 말을 안 했으면 null",
   "missing_info": [{"asked":"원산지가 어디예요?","needed":"상품별 원산지","found":false}],
   "used_refs": {"products":["A0022"],"synonyms":["뒷다리"],"policies":["TONE"]},
   "images": [{"ref":"img_1","kind":"product|address|payment|other","read":"이미지에서 읽은 것 요약"}]
@@ -115,6 +129,16 @@ OUTPUT_CONTRACT = """\
   "삼겹살은 빼주세요" → remove, "3개로 바꿔주세요" → update.
   고객이 확정된 품목이 아니라고 하면 → reject.
   제시한 후보 중 하나를 고르면 → choose 와 chosen_code.
+- op="reject" 일 때는 고객이 아니라고 말한 부분을 발화에서 그대로 잘라 reject_evidence 에 넣는다.
+  요약하거나 번역하지 않는다. 고객 문장에 있는 글자 그대로여야 한다.
+  잘라낼 부분이 없으면 reject 를 쓰지 않는다.
+- "이거", "그 상품", "사진에 있는 것" 처럼 앞말이나 사진을 가리키는 표현이면
+  is_reference 를 true 로 하고, 그 표현을 발화에서 그대로 잘라 reference_evidence 에 넣는다.
+  상품명을 말한 것이 아니므로 name_hint 에는 넣지 않는다.
+- customer_question 에는 고객이 이번 턴에 물은 문장을 그대로 담고, 그 질문에 답했으면
+  question_answered 를 true 로 한다. 되물음이나 정보 요청 때문에 고객 질문을 흘려보내지 않는다.
+- reply 에서 어떤 상품을 취급하지 않는다고 말했으면 그 상품명을 unavailable_claim 에 적는다.
+  말하지 않았으면 null 이다.
 - 이번 턴에 언급이 없는 항목은 null 로 둔다. 빈 문자열을 쓰지 않는다.
 - address 는 base(도로명/지번까지)와 detail(동·호)로 반드시 분리한다.
 - unit_expr 는 고객이 실제로 쓴 표현("개","키로","박스")을 그대로 담는다.
@@ -155,6 +179,10 @@ OUTPUT_CONTRACT = """\
   label_code 와 printed_name 에 각각 넣는다. 하나만 읽히면 나머지는 null 로 둔다.
   둘을 합쳐 하나로 만들지 않는다. 두 값이 서로를 검증하는 독립 신호이기 때문이다.
 - address 이미지에서는 수령인·전화번호·주소를 읽는다. 주소는 base 와 detail 로 나눈다.
+- 수령인 이름은 한글·로마자·태국 문자 등 어떤 문자로 적혀 있든 읽은 그대로 receiver 에 담는다.
+  한글로 음역하거나 한국식 이름으로 바꾸지 않는다. Pen, anan, GUIRAT 처럼 로마자로만
+  적힌 것도 그대로 옮긴다. 한국어 이름이 아니라는 이유로 이름이 아니라고 판단하지 않는다.
+  고객은 한국에 사는 외국인이고, 수령인 이름이 외국어인 것이 오히려 일반적이다.
 - 사진에서 라벨코드나 상품명을 읽었으면 images 의 read 에만 적지 말고
   반드시 item_ops 에도 항목을 만들어 label_code / printed_name 에 넣는다.
   읽어놓고 item_ops 를 비워두면 고객에게 무엇인지 다시 묻게 된다.
@@ -209,16 +237,34 @@ def candidates_for(text, catalog, mode, limit=8, always=None):
     return out[:limit]
 
 
+# 고객 언어. 코드가 조립하는 문장은 문구표에서 나오지만, reply 는 LLM 이 쓴다.
+# 두 문장이 서로 다른 언어로 붙어 나가면 대화가 통째로 어색해진다.
+LANG_NAME = {"ko": "한국어", "th": "태국어(ภาษาไทย)", "vi": "베트남어", "en": "영어"}
+
+
+def reply_language_rule(lang):
+    name = LANG_NAME.get(str(lang or "").strip().lower())
+    if not name:
+        return ""
+    return ("reply 는 반드시 %s 로 쓴다. 고객이 다른 언어를 섞어 쓰더라도 %s 로 답한다. "
+            "코드가 조립한 문장도 %s 이므로 언어가 섞이면 안 된다." % (name, name, name))
+
+
 def build_system(policies, mode):
     """축소 모드는 지침 DB 를 쓰지 않고 일반적인 CS 지시문만 사용한다."""
+    lang_rule = reply_language_rule(getattr(policies, "lang", ""))
+
     if mode == "reduced":
         return ("당신은 온라인 식료품 쇼핑몰의 고객 상담 챗봇입니다. "
-                "친절하게 응대하고 고객의 주문을 도와주세요.\n\n" + OUTPUT_CONTRACT)
+                "친절하게 응대하고 고객의 주문을 도와주세요.\n"
+                + lang_rule + "\n\n" + OUTPUT_CONTRACT)
 
     persona = policies.get("PERSONA")
     lines = ["당신은 모모플러스의 주문 상담 담당자입니다."]
+    if lang_rule:
+        lines.append(lang_rule)
     if persona:
-        lines.append("말투와 태도는 '%s' 입니다." % persona)
+        lines.append("말투와 태도는 '%s' 입니다." % str(persona).strip())
     lines += [
         "고객이 주문과 무관한 말을 걸어도 사람처럼 짧게 받아준 뒤 하던 일로 돌아옵니다.",
         "안내문을 읽는 듯한 문어체를 쓰지 않습니다.",
@@ -227,14 +273,42 @@ def build_system(policies, mode):
         "",
     ]
     for r in policies.prompt_rules():
+        # 시트에서 온 값에 탭·공백이 섞여 오는 일이 있다. 지시문에 그대로 실리면
+        # 모델이 그 공백까지 문장의 일부로 읽는다
         lines.append("- [%s] %s = %s : %s" % (
-            r.get("구분", ""), r.get("키", ""), r.get("값", ""), r.get("설명", "")))
+            r.get("구분", ""), r.get("키", ""),
+            str(r.get("값", "") or "").strip(), r.get("설명", "")))
     lines += ["", OUTPUT_CONTRACT]
     return "\n".join(lines)
 
 
+# 상품 행에서 LLM 에게 넘겨도 되는 컬럼. 여기 없는 컬럼은 전부 막는다.
+#
+# 기본이 "허용" 이면 전사 원장에 컬럼이 하나 늘 때마다 사고 위험이 생긴다.
+# momo_master_products 는 WMS·ERP 와 공유하는 원장이라 원가(cost)와 내부 코드가 들어 있고,
+# 그게 고객 응대 프롬프트에 실리면 모델이 고객에게 말할 수 있다. 되돌릴 수 없다.
+PROMPT_COLUMNS = ("item_code", "display_name", "price", "unit", "species", "part", "ship_type")
+
+
+def _product_line(catalog, code, mode):
+    """후보 상품 한 줄. 화이트리스트에 있는 컬럼만 나간다."""
+    if mode == "reduced":
+        # 축소 모드는 표시명과 가격만 전달한다
+        return "  - %s / %s원" % (catalog.display(code), catalog.price(code))
+    r = catalog.items.get(code, {})
+    vals = []
+    for k in PROMPT_COLUMNS:
+        v = r.get(k)
+        if str(v if v is not None else "").strip():
+            vals.append("%s=%s" % (k, v))
+    if catalog.soldout(code):
+        vals.append("soldout=Y(지금 품절)")
+    return "  - " + " / ".join(vals)
+
+
 def build_user(text, state, catalog, cand_codes, mode, history=None,
-               fixed_reply=None, upsell=None, pending=None, recent=4):
+               fixed_reply=None, upsell=None, pending=None, recent=4,
+               options_limit=5):
     parts = []
 
     # 전체 이력을 재전송하지 않는다. 최근 N턴만 보낸다.
@@ -262,7 +336,10 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
         if pending.get("missing"):
             want.append("아직 못 받은 필수 정보: " + ", ".join(pending["missing"]))
         if pending.get("detail"):
-            want.append("상세주소(동·호)가 없음 — 요청 수준: %s" % pending.get("detail_rule", "권장"))
+            # 동·호를 전제하지 않는다. 고객은 기숙사·농장·컨테이너에 사는 경우가 많고,
+            # 동·호를 물으면 영원히 답할 수 없는 질문이 된다
+            want.append("상세주소(건물·호수·눈에 띄는 표시 등 기사님이 찾아갈 단서)가 없음"
+                        " — 요청 수준: %s" % pending.get("detail_rule", "권장"))
         if want:
             parts.append(
                 "[아직 채우지 못한 것 — 이번 답변에서 자연스럽게 물어본다]\n  "
@@ -278,16 +355,25 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
             if l.unavailable:
                 continue
             mark = ""
-            if l.rejected:
-                alts = ", ".join("%s=%s" % (c, catalog.display(c)) for c in l.alternatives)
+            # 후보를 전부 실으면 품목 1,000개에서 프롬프트가 감당이 안 된다.
+            # 고객에게 보여줄 만큼만, 인기순으로 잘라 넘긴다
+            def _opts(codes):
+                return ", ".join("%s=%s" % (c, catalog.display(c))
+                                 for c in catalog.by_rank(codes)[:options_limit])
+
+            if l.soldout_alts:
+                mark = (" ← 지금 품절이라 대체 상품을 되묻는 중. 고객이 하나를 고르면 "
+                        'op="choose" 와 chosen_code 로 돌려준다. 후보: %s'
+                        % (_opts(l.soldout_alts) or "없음"))
+            elif l.rejected:
                 mark = (" ← 고객이 아니라고 해서 되묻는 중. 고객이 하나를 고르면 "
-                        'op="choose" 와 chosen_code 로 돌려준다. 후보: %s' % (alts or "없음"))
+                        'op="choose" 와 chosen_code 로 돌려준다. 후보: %s'
+                        % (_opts(l.alternatives) or "없음"))
             elif l.match and l.match.status == M.AMBIGUOUS:
                 # 코드를 알려주지 않으면 고객이 골라도 chosen_code 를 채울 수 없다
-                opts = ", ".join("%s=%s" % (c, catalog.display(c)) for c in l.match.candidates)
                 mark = (" ← 어느 상품인지 되묻는 중. 고객이 하나를 고르면 "
                         'op="choose", name_hint="%s", chosen_code=해당코드 로 돌려준다. 후보: %s'
-                        % (l.key, opts))
+                        % (l.key, _opts(l.match.candidates)))
             cur.append("  - %s ×%s%s" % (l.key, l.quantity, mark))
         if cur:
             parts.append("[현재까지 담긴 품목]\n" + "\n".join(cur))
@@ -300,16 +386,7 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
             parts.append("[이미 확보한 정보 — 다시 묻지 않는다]\n" + "\n".join(info))
 
     if cand_codes:
-        rows = []
-        for c in cand_codes:
-            r = catalog.items.get(c, {})
-            if mode == "reduced":
-                # 축소 모드는 표시명과 가격만 전달한다
-                rows.append("  - %s / %s원" % (catalog.display(c), catalog.price(c)))
-            else:
-                # 전체 모드는 시트에 있는 모든 컬럼을 그대로 넘긴다
-                rows.append("  - " + " / ".join(
-                    "%s=%s" % (k, v) for k, v in r.items() if str(v).strip()))
+        rows = [_product_line(catalog, c, mode) for c in cand_codes]
         parts.append("[후보 상품]\n" + "\n".join(rows))
 
     parts.append("[고객 발화]\n" + str(text or ""))
@@ -317,13 +394,15 @@ def build_user(text, state, catalog, cand_codes, mode, history=None,
 
 
 def _code_of(text, catalog):
-    """이미지에서 읽어낸 문자열이 실제 상품을 가리키면 그 코드를 돌려준다."""
-    t = str(text or "").strip()
+    """이미지에서 읽어낸 문자열이 실제 상품을 가리키면 그 품목코드를 돌려준다.
+    사진에서 읽히는 것은 라벨코드이고 품목코드와 같지 않을 수 있다."""
+    t = M.nfc(text).strip()
     if not t:
         return None
     for token in re.findall(r"[A-Za-z]\d{3,}", t):
-        if token.upper() in catalog.label_codes():
-            return token.upper()
+        item = catalog.item_of_label(token)
+        if item:
+            return item
     for codes in (catalog.by_canonical.get(t), catalog.by_synonym.get(t)):
         if codes and len(set(codes)) == 1:
             return codes[0]

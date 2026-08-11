@@ -68,7 +68,12 @@ def _fetch(url, token, tab):
         raise RuntimeError(
             "Apps Script 가 읽기를 지원하지 않는 예전 버전입니다. "
             "tools/apps_script_doPost.gs 를 다시 붙여넣고 새 버전으로 배포해주세요.")
-    return pd.DataFrame(data.get("rows") or [])
+    df = pd.DataFrame(data.get("rows") or [])
+    # 시트 헤더에 눈에 안 보이는 공백이 붙는 일이 있다("tokens_in "). 그대로 두면
+    # 보고서가 그 컬럼을 못 찾아 토큰·비용이 0으로 집계되는데 아무 경고도 안 뜬다.
+    if not df.empty:
+        df.columns = [str(c).strip() for c in df.columns]
+    return df
 
 
 def read(tab):
@@ -98,13 +103,21 @@ def _avg(values):
 
 def build_rows(conv_id, tester, mode_label, model, state, quote, history,
                verdicts, sources, note, policy_version, started_at, ended_at,
-               flag_settings, handoff=""):
-    """대화 하나가 끝났을 때 각 탭에 넣을 행을 한꺼번에 만든다."""
+               flag_settings, handoff="", lang="", channel="", app_version=""):
+    """대화 하나가 끝났을 때 각 탭에 넣을 행을 한꺼번에 만든다.
+
+    lang·channel 은 대화마다 다르다. 남기지 않으면 나중에 집계할 때
+    태국어 대화와 한국어 대화가 한 덩어리로 섞여 비교가 불가능해진다."""
     common = {"conversation_id": conv_id, "tester_name": tester,
               "knowledge_mode": mode_label, "policy_version_id": policy_version}
+    # conversations·turns 두 탭에만 넣는다. 나머지 탭은 대화 단위로 조인하면 된다
+    axes = {"lang": lang, "channel": channel}
 
-    conv = dict(common)
+    conv = dict(common, **axes)
     conv.update({
+        # conversations 에 app_version 컬럼이 있는데 아무도 채우지 않고 있었다.
+        # 어느 빌드에서 나온 결과인지 모르면 구조 전환 전후를 비교할 수 없다
+        "app_version": app_version,
         "started_at": started_at, "ended_at": ended_at, "model": model,
         "flag_settings_json": _j(flag_settings),
         "turn_count": len(history),
@@ -130,7 +143,7 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
     turns = []
     for h in history:
         api = h.get("addr_api") or {}
-        turns.append(dict(common, **{
+        turns.append(dict(common, **axes, **{
             "turn_no": h["turn"], "timestamp": h.get("at", ""),
             "user_text": h["user"], "image_refs": ",".join(h.get("img_refs") or []),
             "bot_text": h["bot"],
@@ -139,7 +152,9 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
             "used_refs_json": _j((h.get("out") or {}).get("used_refs")),
             "missing_info_json": _j((h.get("out") or {}).get("missing_info")),
             "flags_raised": ",".join(f.key for f in h.get("flags") or []),
-            "auto_detect_hits": ",".join(d["감지"] for d in h.get("detect") or []),
+            # 화면 문구가 아니라 코드를 남긴다. 언어마다 다른 값이 쌓이면 집계가 갈린다
+            "auto_detect_hits": ",".join(d.get("code") or d.get("감지", "")
+                                         for d in h.get("detect") or []),
             "addr_keyword_raw": api.get("raw", ""),
             "addr_keyword_clean": api.get("clean", ""),
             "addr_error_code": api.get("error", ""),

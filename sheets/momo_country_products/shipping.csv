@@ -1,0 +1,3 @@
+country_code,channel,ship_type,fee,free_threshold,note
+KR,,냉동,3000,50000,채널 공통
+KR,,상온,2500,40000,채널 공통

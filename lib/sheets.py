@@ -19,36 +19,60 @@ import streamlit as st
 CSV_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab}"
 
 # 논리 이름 -> (Secrets 키, 탭 이름)
+# 세 축(나라·채널·언어)을 각각 다른 탭이 담당한다.
+#   prices    나라 × 채널   판매가·rank
+#   shipping  나라 × 채널   배송유형별 배송비
+#   product_names / synonyms / units   언어
+# 상품 이름과 유사어는 채널이 달라도 같으므로 그 탭에는 channel 이 없다.
 SOURCES = {
-    "master_products":  ("SHEET_ID_MASTER",  "master_products"),
-    "country_products": ("SHEET_ID_COUNTRY", "country_products"),
-    "synonyms":         ("SHEET_ID_COUNTRY", "synonyms"),
-    "bot_policies":     ("SHEET_ID_POLICY",  "bot_policies"),
+    "master_products": ("SHEET_ID_MASTER",  "master_products"),
+    "prices":          ("SHEET_ID_COUNTRY", "prices"),
+    "shipping":        ("SHEET_ID_COUNTRY", "shipping"),
+    "product_names":   ("SHEET_ID_COUNTRY", "product_names"),
+    "synonyms":        ("SHEET_ID_COUNTRY", "synonyms"),
+    "units":           ("SHEET_ID_COUNTRY", "units"),
+    "bot_policies":    ("SHEET_ID_POLICY",  "bot_policies"),
 }
 
 # 캐시 수명(초). 지침은 실험 중 자주 바뀌므로 짧게, 상품 마스터는 길게.
 TTL = {
-    "bot_policies":     60,
-    "synonyms":         300,
-    "country_products": 300,
-    "master_products":  1800,
+    "bot_policies":    60,
+    "synonyms":        300,
+    "product_names":   300,
+    "prices":          300,
+    "shipping":        300,
+    "units":           600,
+    "master_products": 1800,
 }
 
 # 시스템 동작에 반드시 필요한 최소 컬럼. 없으면 실행을 중단하고 무엇이 없는지 알린다.
 # 나머지 컬럼은 있으면 쓰고 없으면 넘어간다.
 REQUIRED = {
-    "master_products":  ["item_code"],
-    "country_products": ["item_code", "display_name", "price"],
-    "synonyms":         ["item_code", "synonym"],
-    "bot_policies":     ["구분", "키", "값"],
+    "master_products": ["item_code"],
+    "prices":          ["country_code", "item_code", "price"],
+    "shipping":        ["ship_type", "fee"],
+    "product_names":   ["lang", "item_code", "display_name"],
+    "synonyms":        ["lang", "item_code", "synonym"],
+    "units":           ["lang", "expr", "type"],
+    "bot_policies":    ["구분", "키", "값"],
 }
+
+# 없거나 비어 있어도 앱이 돌아가는 소스. 폴백 경로가 코드에 있다.
+#   shipping       없으면 SHIPPING_FEE / FREE_SHIPPING_THRESHOLD 로 계산
+#   product_names  없으면 canonical_name 으로 표시
+#   units          없으면 한국어 기본 단위표
+# 탭을 아직 안 만든 상태에서 앱이 통째로 멈추면 아무것도 관찰할 수 없다.
+OPTIONAL = {"shipping", "product_names", "units"}
 
 # 목 모드에서 읽을 로컬 CSV. 시트 ID 가 없어도 화면이 뜨게 한다.
 LOCAL_FALLBACK = {
-    "master_products":  "sheets/momo_master_products/master_products.csv",
-    "country_products": "sheets/momo_country_products/country_products.csv",
-    "synonyms":         "sheets/momo_country_products/synonyms.csv",
-    "bot_policies":     "sheets/momo_bot_policies/bot_policies.csv",
+    "master_products": "sheets/momo_master_products/master_products.csv",
+    "prices":          "sheets/momo_country_products/prices.csv",
+    "shipping":        "sheets/momo_country_products/shipping.csv",
+    "product_names":   "sheets/momo_country_products/product_names.csv",
+    "synonyms":        "sheets/momo_country_products/synonyms.csv",
+    "units":           "sheets/momo_country_products/units.csv",
+    "bot_policies":    "sheets/momo_bot_policies/bot_policies.csv",
 }
 
 
@@ -115,14 +139,22 @@ def load(name):
 
 
 def load_all():
-    """모든 소스를 읽는다. 실패한 소스는 예외를 담아 돌려주고 앱을 죽이지 않는다."""
-    data, origins, errors = {}, {}, {}
+    """모든 소스를 읽는다. 실패한 소스는 예외를 담아 돌려주고 앱을 죽이지 않는다.
+
+    선택 소스(OPTIONAL)는 빈 표로 대체하고 경고만 남긴다. 탭을 아직 안 만들었다는
+    이유로 앱 전체가 멈추면 나머지를 관찰할 방법이 없어진다."""
+    data, origins, errors, warnings = {}, {}, {}, {}
     for name in SOURCES:
         try:
             data[name], origins[name] = load(name)
         except Exception as e:
-            errors[name] = e
-    return data, origins, errors
+            if name in OPTIONAL:
+                data[name] = pd.DataFrame()
+                origins[name] = "없음 (폴백)"
+                warnings[name] = e
+            else:
+                errors[name] = e
+    return data, origins, errors, warnings
 
 
 def clear_cache():
