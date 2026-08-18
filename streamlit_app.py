@@ -25,7 +25,7 @@ from lib import sheets
 from lib.order import OrderState
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-10.2"
+APP_VERSION = "2026-08-10.3"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 # 태국 직원이 이 도구를 직접 쓴다. 이름 대신 A·B·C 로 구분한다.
@@ -49,7 +49,8 @@ VERDICT_KEYS = [("invoice", "vf_invoice"), ("address", "vf_address"),
                 ("receiver", "vf_receiver"), ("phone", "vf_phone")]
 CAUSE_TAGS = [("추출오류", "cause_extract"), ("매칭오류", "cause_match"),
               ("단위오해", "cause_unit"), ("DB에없음", "cause_nodb"),
-              ("지침부족", "cause_policy"), ("기타", "cause_etc")]
+              ("지침부족", "cause_policy"), ("언어품질", "cause_lang"),
+              ("기타", "cause_etc")]
 MODES = [("전체", "ui_mode_full"), ("축소", "ui_mode_reduced")]
 
 
@@ -566,6 +567,10 @@ with tab_verdict:
     else:
         state = ss.state
         quote = state.quote(CAT, P)
+        # 저장 시점이 아니라 대화가 시작될 때 이미 정해지는 값이다.
+        # 테스터가 시트에 옮겨 적어야 하므로 저장 전에도 보여준다.
+        conv_id = "%s-%s-%03d" % (tester, ss.started_at.replace(" ", "_").replace(":", ""),
+                                  ss.conv_no)
         st.markdown(T.t("vd_title"))
 
         c1, c2 = st.columns([2, 1])
@@ -621,6 +626,12 @@ with tab_verdict:
         # ---------------------------------------------------------- 플래그 판정
         # 시트에는 정탐·오탐을 찍는 칸이 있는데 화면에 없었다. 그래서 빈 채로 저장되고,
         # 나중에 시트를 열어 키와 근거만 보고 판단해야 했다. 그때는 대화가 눈앞에 없다.
+        # 테스트 시트와 로그를 잇는 열쇠. 없으면 실패율은 보이는데 그 이유를 못 찾는다.
+        st.divider()
+        st.markdown(T.t("vd_convid"))
+        st.caption(T.t("vd_convid_help"))
+        st.code(conv_id, language=None)
+
         st.divider()
         st.markdown(T.t("vd_flags"))
         st.caption(T.t("vd_flags_help"))
@@ -681,9 +692,6 @@ with tab_verdict:
             }
             for k in verdicts:
                 verdicts[k]["final_value"] = finals.get(k, "")
-
-            conv_id = "%s-%s-%03d" % (tester, ss.started_at.replace(" ", "_").replace(":", ""),
-                                      ss.conv_no)
 
             rec = {
                 "conversation_id": conv_id, "conv_no": ss.conv_no, "tester": tester,
