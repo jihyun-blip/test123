@@ -53,6 +53,8 @@ CONSUMER = {
     "REQUEST_PAYMENT_PROOF":   "code",
     "ASK_RETRY_LIMIT":         "code",
     "AMBIGUOUS_MAX_OPTIONS":   "code",
+    # 반복 감지 임계값. 코드가 문자열을 비교해 판단하므로 모델에게 알릴 필요가 없다
+    "REPEAT_LIMIT":            "code",
     "AMBIGUOUS_ATTR_THRESHOLD": "code",
     "AMOUNT_MISMATCH_ENFORCE": "code",
 }
