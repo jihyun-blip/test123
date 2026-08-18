@@ -212,14 +212,14 @@ def evaluate(state, quote, catalog, policies, out, mode, bot_text="", asking=Fal
         add("HANDOFF_REQUEST", T.t("fl_handoff"))
     if out.get("angry"):
         add("ANGRY_CUSTOMER", T.t("fl_angry"))
-    # 입금증은 있어도 없어도 플래그가 뜬다. 있으면 대조 대상, 없으면 미완료다.
-    # 어느 쪽이든 상담원이 은행 내역을 봐야 하므로 검수 목록에서 빠지면 안 된다.
+    # 입금 확인 자체는 챗봇 범위가 아니다. 주문은 입금 전 상태로 넘어가고,
+    # 가상계좌 입금은 플랫폼이 자동으로 대조한다.
+    # 다만 고객이 입금을 언급했다면 이야기가 다르다. 말과 실제 입금이 어긋날 수 있고,
+    # 그건 사람이 확인해야 한다. 언급이 있었을 때만 올린다.
     if state.payment_proof:
         add("PAYMENT_PROOF_IMAGE", T.t("fl_proof", state.payment_proof))
     elif out.get("intent") == "payment_claim":
         add("PAYMENT_UNCONFIRMED", T.t("fl_payment_claim"))
-    elif state.lines and not missing_required_any(state, policies):
-        add("PAYMENT_UNCONFIRMED", T.t("fl_payment_pending"))
 
     # ---------------------------------------------------------- 금액
     # 자동 감지에만 남기고 플래그를 올리지 않으면 아무것도 막지 못한다.
