@@ -103,7 +103,7 @@ def _avg(values):
 
 def build_rows(conv_id, tester, mode_label, model, state, quote, history,
                verdicts, sources, note, policy_version, started_at, ended_at,
-               flag_settings, handoff="", lang="", channel="", app_version="",
+               flag_settings, handoff="", outcome="", lang="", channel="", app_version="",
                flag_verdicts=None, missed_flags=None):
     """대화 하나가 끝났을 때 각 탭에 넣을 행을 한꺼번에 만든다.
 
@@ -138,6 +138,7 @@ def build_rows(conv_id, tester, mode_label, model, state, quote, history,
         "tokens_out": sum((h.get("usage") or {}).get("output") or 0 for h in history),
         "latency_avg_ms": _avg(h.get("latency_ms") for h in history),
         "latency_max_ms": max([h.get("latency_ms") or 0 for h in history] or [0]),
+        "outcome": outcome,
         "note": note,
     })
 

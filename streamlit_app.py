@@ -25,7 +25,7 @@ from lib import sheets
 from lib.order import OrderState
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-10.3"
+APP_VERSION = "2026-08-10.4"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 # 태국 직원이 이 도구를 직접 쓴다. 이름 대신 A·B·C 로 구분한다.
@@ -52,6 +52,11 @@ CAUSE_TAGS = [("추출오류", "cause_extract"), ("매칭오류", "cause_match")
               ("지침부족", "cause_policy"), ("언어품질", "cause_lang"),
               ("기타", "cause_etc")]
 MODES = [("전체", "ui_mode_full"), ("축소", "ui_mode_reduced")]
+
+# 이 도구가 답해야 하는 숫자는 "챗봇이 혼자 주문서까지 갔는가" 하나다.
+# 검수 플래그가 떴는지는 여기에 영향을 주지 않는다. 검수는 나중에 사람이 기록을 보는 것이고,
+# 이관은 대화 도중에 사람이 들어가야 했다는 뜻이라 서로 다른 축이다.
+OUTCOMES = [("자율완결", "oc_auto"), ("이관", "oc_handoff"), ("이탈", "oc_drop")]
 
 
 def init():
@@ -438,7 +443,8 @@ with tab_chat:
             bot = T.t("greeting") + "\n" + bot
 
         asking = kind in RP.ASK_STAGES or bool(pend_after["missing"] or pend_after["detail"])
-        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode, bot_text=bot, asking=asking)
+        fl = FL.evaluate(ss.state, quote, CAT, P, out, mode, bot_text=bot, asking=asking,
+                         history=ss.history, fixed_text=fixed, user_text=prompt)
         # 되물었는지는 물음표가 아니라 단계로 본다. 태국어는 물음표 없이 묻는다.
         prev_asked = bool(ss.history and ss.history[-1].get("asking"))
         det = FL.detect(bot, ss.state, quote, P, out, prev_asked, catalog=CAT, asking=asking)
@@ -459,10 +465,13 @@ with tab_chat:
     with right:
         state = ss.state
         quote = state.quote(CAT, P)
+        # 이미 지나간 턴을 다시 그리는 것이므로 이번 턴 문장을 또 넘기지 않는다.
+        # 넘기면 마지막 응답이 두 번 센 것으로 보여 반복 횟수가 부풀려진다.
         fl = FL.evaluate(state, quote, CAT, P,
                          ss.history[-1]["out"] if ss.history else {}, mode,
                          bot_text=ss.history[-1]["bot"] if ss.history else "",
-                         asking=bool(ss.history and ss.history[-1].get("asking")))
+                         asking=bool(ss.history and ss.history[-1].get("asking")),
+                         history=ss.history)
 
         st.markdown(T.t("panel_order"))
 
@@ -626,6 +635,13 @@ with tab_verdict:
         # ---------------------------------------------------------- 플래그 판정
         # 시트에는 정탐·오탐을 찍는 칸이 있는데 화면에 없었다. 그래서 빈 채로 저장되고,
         # 나중에 시트를 열어 키와 근거만 보고 판단해야 했다. 그때는 대화가 눈앞에 없다.
+        st.divider()
+        st.markdown(T.t("vd_outcome"))
+        st.caption(T.t("vd_outcome_help"))
+        outcome = st.radio(T.t("vd_outcome"), [c for c, _ in OUTCOMES], horizontal=True,
+                           format_func=lambda c: T.t(dict(OUTCOMES)[c]),
+                           label_visibility="collapsed")
+
         # 테스트 시트와 로그를 잇는 열쇠. 없으면 실패율은 보이는데 그 이유를 못 찾는다.
         st.divider()
         st.markdown(T.t("vd_convid"))
@@ -695,6 +711,7 @@ with tab_verdict:
 
             rec = {
                 "conversation_id": conv_id, "conv_no": ss.conv_no, "tester": tester,
+                "outcome": outcome,
                 "mode": mode_label, "model": model, "lang": lang, "channel": channel,
                 "turns": len(ss.history), "images": len(ss.images),
                 "tokens_in": sum(h["usage"].get("input", 0) or 0 for h in ss.history),
@@ -714,6 +731,7 @@ with tab_verdict:
                     bundle = LOG.build_rows(
                         conv_id, tester, mode_label, model, state, quote, ss.history,
                         verdicts, sources, note, handoff=HO.as_text(hand),
+                        outcome=outcome,
                         policy_version=sheets.secret("POLICY_VERSION", "sheet-live"),
                         started_at=ss.started_at, ended_at=now(),
                         flag_settings={k: r.get("값") for k, r in P.flags.items()},
@@ -797,6 +815,7 @@ def records_from_sheet():
             "latency_avg": num(c.get("latency_avg_ms")),
             "latency_max": num(c.get("latency_max_ms")),
             "verdicts": verdicts, "sources": sources, "note": c.get("note", ""),
+            "outcome": c.get("outcome", ""),
         })
     return out, None
 
@@ -827,7 +846,10 @@ with tab_report:
         cost = sum(LLM.cost_usd(r["model"], _num(r["tokens_in"]), _num(r["tokens_out"]))
                    for r in recs)
 
-        c = st.columns(5)
+        auto = sum(1 for r in recs if r.get("outcome") == "자율완결")
+        judged = [r for r in recs if r.get("outcome")]
+
+        c = st.columns(6)
         c[0].metric(T.t("rp_conversations"), "%d" % len(recs))
         c[1].metric(T.t("rp_calls"), "%d" % sum(_num(r["turns"]) for r in recs))
         c[2].metric(T.t("rp_images"), "%d" % sum(_num(r["images"]) for r in recs))
@@ -835,6 +857,11 @@ with tab_report:
                     T.t("rp_tokens_delta", f"{tin:,}", f"{tout:,}"))
         # 총액보다 "대화 1건당 얼마"가 자체 구축 판단의 실제 근거다.
         per = cost / len(recs)
+        if judged:
+            c[5].metric(T.t("rp_autorate"), "%.0f%%" % (100 * auto / len(judged)),
+                        T.t("rp_autorate_delta", auto, len(judged)))
+        else:
+            c[5].metric(T.t("rp_autorate"), "—", T.t("rp_autorate_none"))
         c[4].metric(T.t("rp_cost"), T.money(int(cost * KRW)),
                     T.t("rp_cost_delta", f"{int(per * KRW):,}"))
         st.caption(T.t("rp_cost_note", f"{KRW:,}", f"{int(per * KRW * 10000):,}"))
@@ -843,6 +870,16 @@ with tab_report:
         if lat:
             mx = max(_num(r.get("latency_max")) for r in recs)
             st.caption(T.t("rp_latency", sum(lat) / len(lat) / 1000, mx / 1000))
+
+        if judged:
+            st.markdown(T.t("rp_outcomes"))
+            orows = []
+            for code, key in OUTCOMES:
+                cnt = sum(1 for r in judged if r.get("outcome") == code)
+                orows.append({T.t("rp_col_outcome"): T.t(key),
+                              T.t("rp_col_count"): cnt,
+                              T.t("rp_col_rate"): "%.0f%%" % (100 * cnt / len(judged))})
+            st.dataframe(pd.DataFrame(orows), width="stretch", hide_index=True)
 
         st.divider()
         st.markdown(T.t("rp_by_field"))

@@ -9,6 +9,7 @@
 자동 감지는 사람 눈이 놓치는 것을 코드가 매 턴 잡는 것이다.
 상당수가 지침 DB 의 기존 규칙에서 직접 도출된다.
 """
+import difflib
 import re
 
 from . import matching as M
@@ -18,6 +19,41 @@ from . import messages as MSG
 # reply 에도 같은 표가 있지만 여기서 그 모듈을 불러오면 순환 참조가 되고,
 # Streamlit 이 모듈을 다시 읽을 때 임포트가 통째로 깨진다.
 _FIELD_OF = {"수령인": "receiver", "전화": "phone", "주소": "address_base"}
+
+
+def _norm(text):
+    """비교용으로 공백과 문장부호를 지운다. 태국어는 띄어쓰기가 들쭉날쭉하다."""
+    return re.sub(r"[\s.,!?~…·\-]", "", str(text or ""))
+
+
+def _same(a, b, loose=False):
+    """loose 는 고객 발화용이다.
+
+    챗봇은 같은 문장을 글자 그대로 반복하지만, 고객은 '소꼬리 산다고' → '소꼬리!!' 처럼
+    줄여 가며 같은 말을 되풀이한다. 엄격하게 비교하면 정작 답답해하는 고객을 놓친다."""
+    a, b = _norm(a), _norm(b)
+    if not a or not b:
+        return False
+    if loose and len(a) >= 2 and len(b) >= 2 and (a in b or b in a):
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= (0.8 if loose else 0.9)
+
+
+def trailing_repeats(texts, loose=False):
+    """마지막 말과 사실상 같은 말이 연달아 몇 번 나왔는가. 마지막 것을 포함해 센다.
+
+    같은 말을 반복한다는 것은 대화가 앞으로 가지 못한다는 뜻이다.
+    챗봇이 반복하면 흐름이 막힌 것이고, 고객이 반복하면 못 알아듣고 있는 것이다.
+    둘 다 사람이 들어가야 할 신호이며, 문자열 비교만으로 확실하게 잡힌다."""
+    texts = [t for t in (texts or []) if str(t or "").strip()]
+    if not texts:
+        return 0
+    n = 1
+    for prev in reversed(texts[:-1]):
+        if not _same(prev, texts[-1], loose):
+            break
+        n += 1
+    return n
 
 
 def missing_required_any(state, policies):
@@ -63,7 +99,8 @@ def _priced(codes, catalog, T):
                      for c in codes) or T.t("fl_no_alt")
 
 
-def evaluate(state, quote, catalog, policies, out, mode, bot_text="", asking=False):
+def evaluate(state, quote, catalog, policies, out, mode, bot_text="", asking=False,
+             history=None, fixed_text="", user_text=""):
     """이번 턴 기준으로 떠야 할 플래그를 전부 모은다."""
     flags = []
     known = policies.flags
@@ -73,6 +110,25 @@ def evaluate(state, quote, catalog, policies, out, mode, bot_text="", asking=Fal
     def add(key, evidence):
         if key in known:
             flags.append(Flag(key, known[key].get("값", ""), evidence))
+
+    # ---------------------------------------------------------- 제자리걸음
+    # 코드가 만든 문장(fixed)으로 비교한다. LLM 덧붙임은 매번 달라서, 전체 문장을
+    # 비교하면 같은 되물음이 반복되는데도 다른 말로 보인다.
+    limit = policies.get_int("REPEAT_LIMIT", 2)
+    if limit > 0:
+        bots = [h.get("fixed") or h.get("bot") for h in (history or [])]
+        if fixed_text or bot_text:
+            bots.append(fixed_text or bot_text)
+        n = trailing_repeats(bots)
+        if n >= limit:
+            add("BOT_REPEATED", T.t("fl_bot_repeat", n))
+
+        users = [h.get("user") for h in (history or [])]
+        if user_text:
+            users.append(user_text)
+        n = trailing_repeats(users, loose=True)
+        if n >= limit:
+            add("CUSTOMER_REPEATED", T.t("fl_cust_repeat", n))
 
     # ---------------------------------------------------------- 품목
     for line in state.lines:
