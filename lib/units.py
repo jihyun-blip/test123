@@ -186,3 +186,19 @@ def is_weight(expr, units=None):
 
 def parse_pack(unit, units=None):
     return (units or DEFAULT).parse_pack(unit)
+
+
+def fmt_g(grams):
+    """그램 수를 사람이 읽는 표기로. 3000 → '3kg', 500 → '500g'."""
+    return _fmt_g(grams)
+
+
+def total_weight(unit, packs, units=None):
+    """포장단위가 무게일 때 총 중량 표기를 돌려준다. 개수 단위면 None.
+
+    '1kg 3개' 처럼 포장단위와 개수를 나란히 적으면 단위가 두 번 나와,
+    3kg 인지 1kg 인지 읽는 사람이 알 수 없다."""
+    g = parse_pack(unit, units)
+    if not g or not packs:
+        return None
+    return fmt_g(g * packs)

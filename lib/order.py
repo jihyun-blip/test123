@@ -631,6 +631,8 @@ class OrderState:
                 "매칭": catalog.display(code) if code else (line.match.status if line.match else "-"),
                 "배송유형": catalog.ship_type(code) if code else "",
                 "수량": qty,
+                # 무게로 포장된 상품은 총 중량으로 적는다. 개수 단위면 비어 온다.
+                "총중량": U.total_weight(pack, qty, catalog.units) or "",
                 "요청": note or "",
                 "단가": unit,
                 "소계": amount,

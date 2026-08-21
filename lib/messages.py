@@ -103,6 +103,8 @@ KO = {
     "got_fields": "%s 확인했습니다.",
 
     "invoice_line": "%s %d개 %s",
+    # 무게 포장은 총 중량으로만 적는다. 개수를 함께 쓰면 단위가 두 번 나온다
+    "invoice_line_weight": "%s %s %s",
     "ship_fee": "배송비 %s",
     "ship_fee_typed": "%s 배송비 %s",
     "ship_free": "배송비 0원 (%s 이상 무료배송)",
@@ -436,6 +438,7 @@ TH = {
     "got_fields": "รับ %s เรียบร้อยค่ะ",
 
     "invoice_line": "%s %d ชิ้น %s",
+    "invoice_line_weight": "%s %s %s",
     "ship_fee": "ค่าส่ง %s",
     "ship_fee_typed": "ค่าส่ง%s %s",
     "ship_free": "ค่าส่ง 0 วอน (ซื้อครบ %s ส่งฟรี)",

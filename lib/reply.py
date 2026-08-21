@@ -348,10 +348,17 @@ def _invoice_text(quote, policies):
     T = msg(policies)
     out = []
     for r in quote["rows"]:
-        # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
-        pack = (r.get("포장단위") or "").strip()
-        name = "%s %s" % (r["매칭"], pack) if pack else r["매칭"]
-        line = T.t("invoice_line", name, r["수량"], T.money(r["소계"]))
+        # 무게로 포장된 상품은 총 중량 한 가지로만 적는다.
+        # '1kg 3개' 처럼 포장단위와 개수를 나란히 두면 단위가 두 번 나와,
+        # 3kg 인지 1kg 인지 고객이 알 수 없다.
+        weight = (r.get("총중량") or "").strip()
+        if weight:
+            line = T.t("invoice_line_weight", r["매칭"], weight, T.money(r["소계"]))
+        else:
+            # 포장단위는 시트에 있으면 쓰고 없으면 넘어간다. 컬럼 존재를 전제하지 않는다.
+            pack = (r.get("포장단위") or "").strip()
+            name = "%s %s" % (r["매칭"], pack) if pack else r["매칭"]
+            line = T.t("invoice_line", name, r["수량"], T.money(r["소계"]))
         note = (r.get("요청") or "").strip()
         if note and "→" in note:
             # 요청한 무게와 실제 나가는 양이 다르면 숨기지 않고 적는다
