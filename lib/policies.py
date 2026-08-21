@@ -55,6 +55,8 @@ CONSUMER = {
     "AMBIGUOUS_MAX_OPTIONS":   "code",
     # 반복 감지 임계값. 코드가 문자열을 비교해 판단하므로 모델에게 알릴 필요가 없다
     "REPEAT_LIMIT":            "code",
+    # 확인 단계 자체는 코드가 만든다. 지침은 쓸지 말지만 정한다
+    "CONFIRM_DELIVERY_INFO":   "code",
     "AMBIGUOUS_ATTR_THRESHOLD": "code",
     "AMOUNT_MISMATCH_ENFORCE": "code",
 }

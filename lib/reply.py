@@ -33,7 +33,7 @@ DEFAULT_REQUIRED = "수령인,전화,주소"
 # 품목이 아직 확정되지 않아 코드가 되묻고 있는 단계.
 # 이때는 다른 것을 함께 묻지 않는다. 한 턴에 질문은 하나여야 한다.
 ASK_STAGES = {"order_ask", "ambiguous_ask", "reject_ask", "soldout_ask",
-              "notfound_ask", "quantity_ask", "blocked"}
+              "notfound_ask", "quantity_ask", "blocked", "confirm_ask"}
 
 
 def msg(policies):
@@ -64,6 +64,27 @@ def called(line, catalog, policies=None):
 def nearest(expr, catalog, top=3):
     """오타로 보이는 표현에 가장 가까운 실제 상품. 판정 기준은 matching 에 있다."""
     return M.near_candidates(expr, catalog, top)
+
+
+def delivery_sig(state):
+    """확인받을 수령정보의 지문. 값이 하나라도 바뀌면 다시 읽어줘야 한다."""
+    vals = (state.receiver.value, state.phone.value,
+            state.address_base.value, state.address_detail.value)
+    return vals if any(vals) else None
+
+
+def confirm_text(state, policies):
+    """수령정보를 그대로 읽어준다. 값은 상태에서 옮기기만 하고 손대지 않는다."""
+    T = msg(policies)
+    addr = " ".join(v for v in (state.address_base.value,
+                                state.address_detail.value) if v)
+    lines = [T.t("confirm_title")]
+    for key, v in (("confirm_addr", addr),
+                   ("confirm_receiver", state.receiver.value),
+                   ("confirm_phone", state.phone.value)):
+        lines.append(T.t(key, v or "—"))
+    lines.append(T.t("confirm_tail"))
+    return chr(10).join(lines)
 
 
 def invoice_sig(quote):
@@ -116,11 +137,13 @@ def stage(state, quote, catalog, policies):
     LLM 호출 전에 단계만 알고 싶을 때 이 함수를 쓴다."""
     keep = state.invoice_sig
     keep_done = state.done_shown
+    keep_deliv = state.delivery_shown
     try:
         return _body(state, quote, catalog, policies)[1]
     finally:
         state.invoice_sig = keep
         state.done_shown = keep_done
+        state.delivery_shown = keep_deliv
 
 
 # 고객이 물음표 없이 묻는 일이 잦아, 어미도 같이 본다.
@@ -306,6 +329,18 @@ def _body(state, quote, catalog, policies, history=None):
 
     pend = pending(state, policies)
     if not (pend["missing"] or pend["detail"]):
+        # 주문을 마치기 전에 수령정보를 그대로 읽어준다.
+        # 사진에서 읽은 주소는 특히 고객 본인이 한 번 봐야 한다.
+        # 값은 코드가 상태에서 그대로 옮긴다. LLM 이 문장으로 다시 쓰면 한 글자가
+        # 바뀌어도 아무도 모르고, 고객은 틀린 값을 보고 맞다고 답하게 된다.
+        if str(policies.get("CONFIRM_DELIVERY_INFO", "필수") or "").strip() == "필수":
+            sig = delivery_sig(state)
+            if sig and sig != state.delivery_shown:
+                # 고객이 정정하면 값이 바뀌므로 지문도 바뀌고, 바뀐 값으로 다시 읽어준다.
+                state.delivery_shown = sig
+                out.append(confirm_text(state, policies))
+                return ("\n\n".join(out), "confirm_ask")
+
         # 마무리 인사는 한 번이면 된다. 매 턴 반복하면 고객이 같은 말을 계속 듣는다.
         if not state.done_shown:
             state.done_shown = True

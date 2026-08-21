@@ -216,6 +216,7 @@ class OrderState:
         self.payment_proof = None # 입금증 이미지 ref. 받았어도 입금 확인은 사람이 한다
         self.invoice_sig = None  # 마지막으로 보여준 거래명세서의 지문
         self.done_shown = False  # 마무리 인사를 이미 했는가
+        self.delivery_shown = None  # 마지막으로 읽어준 수령정보의 지문
         self.ask_rounds = {}     # 필수 항목별로 몇 턴째 물었는데도 못 받았는가
         self.upsell_shown = 0    # 추가 구매를 권한 횟수. 반복해서 조르지 않기 위한 것
         self.turn_notes = []     # 이번 턴에 코드가 한 판단. 상태 변화 옆에 같이 보여준다
