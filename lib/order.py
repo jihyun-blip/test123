@@ -160,6 +160,9 @@ class Line:
         self.chosen = None      # 후보 중 고객이 고른 item_code
         self.alternatives = []  # 되물을 대체 후보
         self.soldout_alts = []  # 품절일 때 권할 같은 부위의 대체 상품
+        # 못 찾았을 때 고객에게 내밀어 본 후보. 하나뿐이면 고객의 다음 대답이
+        # 그 상품에 대한 답이 된다. 기록해두지 않으면 연결할 방법이 없다
+        self.offered = []
         # 고객이 후보를 좁히는 말을 했을 때 남는 부분집합.
         # 새 줄을 만들지 않고 이 줄을 좁힌다. 매 턴 다시 매칭해도 유지돼야 한다
         self.narrowed = None
@@ -558,6 +561,20 @@ class OrderState:
 
             line.notfound_turns += 1
             near = M.near_candidates(line.key, catalog)
+            line.offered = near
+
+            # 후보가 하나뿐이면 봇이 이미 그 상품을 이름과 가격까지 짚어 보여줬다.
+            # 고객이 아니라고 하지 않고 대화를 이어갔다면 그게 맞다는 뜻이다.
+            # 맞힌 상품을 버리는 것보다 담는 편이 낫다. 틀렸으면 거래명세서에
+            # 바로 보이므로 고객이 그 자리에서 고칠 수 있다.
+            if len(near) == 1 and line.notfound_turns >= 2 and not line.rejected:
+                # 매칭은 이 함수가 불리기 전에 이미 끝났다. 여기서 chosen 만 적어두면
+                # 다음 턴에나 반영되어, 고객은 같은 되물음을 한 번 더 듣는다.
+                line.chosen = near[0]
+                line.match = M.MatchResult(M.CONFIRMED, near[0], rule="후보 수용")
+                line.notfound_turns = 0
+                continue
+
             if not near or line.notfound_turns >= limit:
                 line.unavailable = True
                 line.drop_reason = "not_found"
