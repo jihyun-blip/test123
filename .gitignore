@@ -16,3 +16,10 @@ uploads/
 .env
 .env.*
 *.key
+
+# 실제 고객 개인정보 — 주소 이미지와 파싱 결과는 어떤 형태로도 올리지 않는다
+out/
+주소이미지/
+이미지넣기/
+address_images/
+*.jsonl

@@ -25,7 +25,7 @@ from lib import sheets
 from lib.order import OrderState
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-10.13"
+APP_VERSION = "2026-08-10.14"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 # 태국 직원이 이 도구를 직접 쓴다. 이름 대신 A·B·C 로 구분한다.
@@ -364,6 +364,7 @@ with tab_chat:
         fixed, kind = RP.build(ss.state, quote, CAT, P, ss.history)
 
         # DB 에 없는 상품은 되묻기를 멈추고 없다고 알린 뒤, 나머지 주문을 계속한다.
+        notice = ""
         gone = ss.state.take_unavailable_notice()
         if gone:
             notes = []
@@ -380,7 +381,9 @@ with tab_chat:
             if drop:
                 notes.append(T.t("drop_rejected", T.eul(_names(drop))))
             notes.append(T.t("drop_rest"))
-            fixed = (" ".join(notes) + "\n" + fixed).strip()
+            # fixed 에 섞으면 아래 중복질문 제거 규칙에 같이 지워진다. 그러면 고객은
+            # 상품이 왜 안 담겼는지 영영 모른 채 "어떤 상품 찾으세요?" 만 반복해 듣는다.
+            notice = " ".join(notes)
         tail = (out.get("reply") or "").strip() if err is None else ""
 
         # 고객이 주소나 연락처를 먼저 준 경우, 받았다는 말 없이 다음 질문만 하면
@@ -436,7 +439,7 @@ with tab_chat:
         # 고객이 흐름에서 벗어난 질문을 했다면 그 답이 먼저 오고,
         # 흐름을 되돌리는 코드 문장이 뒤에 붙어야 자연스럽다.
         order = (tail, fixed) if (digression and tail) else (fixed, tail)
-        bot = "\n\n".join(x for x in order if x) or T.t("no_reply")
+        bot = "\n\n".join(x for x in ((notice,) + order) if x) or T.t("no_reply")
 
         # 인사는 봇의 첫 발화 맨 앞에. 무엇을 말하든 그 위에 온다.
         if not ss.history:

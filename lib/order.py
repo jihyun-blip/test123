@@ -452,6 +452,10 @@ class OrderState:
             return
 
         if existing:
+            # 이미 뺀 품목을 고객이 다시 말했다. 침묵하면 왜 안 담기는지 모른 채
+            # 같은 상품을 계속 다시 부르게 된다. 한 번 더 알려준다.
+            if existing.unavailable:
+                existing.notice_shown = False
             if label and not existing.label_code:
                 existing.label_code = label
             q = op.get("quantity")
