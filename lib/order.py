@@ -529,6 +529,15 @@ class OrderState:
             rejected   고객이 아니라고 했는데 대안도 고르지 않았다 → 주문에서 뺌
             soldout    품절인데 대체 상품도 고르지 않았다 → 주문에서 뺌
         """
+        # 되물음은 한 턴에 하나만 나간다. 그런데 횟수는 모든 줄에서 함께 올라가고 있었다.
+        # 그래서 앞줄을 묻는 동안 뒷줄의 횟수가 다 차버려, 고객에게 한 번도 묻지 않은
+        # 품목이 조용히 주문에서 빠졌다. 이번 턴에 실제로 물어볼 줄에만 횟수를 올린다.
+        higher = any(
+            l.soldout_alts or (l.rejected and l.alternatives)
+            or (l.match and l.match.status == M.AMBIGUOUS)
+            for l in self.lines if not l.unavailable)
+        asked_notfound = False
+
         for line in self.lines:
             if line.unavailable:
                 continue
@@ -559,9 +568,15 @@ class OrderState:
                 line.notfound_turns = 0
                 continue
 
-            line.notfound_turns += 1
             near = M.near_candidates(line.key, catalog)
             line.offered = near
+
+            # 더 앞선 되물음이 걸려 있거나 이번 턴에 이미 다른 줄을 묻기로 했으면,
+            # 이 줄은 아직 고객에게 물은 적이 없다. 묻지도 않고 뺄 수는 없다.
+            if higher or asked_notfound:
+                continue
+            asked_notfound = True
+            line.notfound_turns += 1
 
             # 후보가 하나뿐이면 봇이 이미 그 상품을 이름과 가격까지 짚어 보여줬다.
             # 고객이 아니라고 하지 않고 대화를 이어갔다면 그게 맞다는 뜻이다.
