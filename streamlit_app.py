@@ -25,7 +25,7 @@ from lib import sheets
 from lib.order import OrderState
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-10.6"
+APP_VERSION = "2026-08-10.7"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 # 태국 직원이 이 도구를 직접 쓴다. 이름 대신 A·B·C 로 구분한다.
@@ -480,20 +480,23 @@ with tab_chat:
                 # 값은 코드가 비교하는 제어값이라 그대로 두고, 화면 표기만 옮긴다
                 icon = {"차단": "🛑", "상담원연결": "🙋", "되물음": "❓",
                         "검수필수": "🔍"}.get(f.value, "⚠️")
-                st.markdown("%s **%s** · `%s`  \n<small>%s</small>" %
-                            (icon, f.key, T.action(f.value), f.evidence),
-                            unsafe_allow_html=True)
+                # 근거에는 고객·모델이 만든 문자열이 섞인다. HTML 로 끼워 넣으면
+                # 꺾쇠 하나에 DOM 이 어긋나고 화면 전체가 React 오류로 멈춘다.
+                st.markdown("%s **%s** · `%s`" % (icon, f.key, T.action(f.value)))
+                st.caption(f.evidence)
         else:
             st.caption(T.t("panel_no_flags"))
 
         st.divider()
         for key, f in (("panel_receiver", state.receiver), ("panel_phone", state.phone)):
-            st.markdown("**%s** %s <small>%s</small>" %
-                        (T.t(key), f.value or "—", f.origin), unsafe_allow_html=True)
+            st.markdown("**%s** %s" % (T.t(key), f.value or "—"))
+            if f.origin:
+                st.caption(f.origin)
 
         st.markdown(T.t("panel_address"))
-        st.markdown(T.t("panel_addr_read", state.address_base.value or "—",
-                        state.address_base.origin), unsafe_allow_html=True)
+        st.markdown(T.t("panel_addr_read", state.address_base.value or "—"))
+        if state.address_base.origin:
+            st.caption(state.address_base.origin)
         st.markdown(T.t("panel_addr_detail", state.address_detail.value or "—"))
         if state.road_addr:
             st.markdown(T.t("panel_addr_api", state.road_addr, state.zipno))
@@ -663,9 +666,9 @@ with tab_verdict:
             for key, (value, evidence, at) in raised.items():
                 icon = {"차단": "🛑", "상담원연결": "🙋", "되물음": "❓",
                         "검수필수": "🔍"}.get(value, "⚠️")
-                st.markdown("%s **%s** · `%s` · %s  \n<small>%s</small>"
-                            % (icon, key, T.action(value), T.t("vd_flag_turn", at),
-                               evidence), unsafe_allow_html=True)
+                st.markdown("%s **%s** · `%s` · %s"
+                            % (icon, key, T.action(value), T.t("vd_flag_turn", at)))
+                st.caption(evidence)
                 v = st.radio(key, [c for c, _ in FLAG_VERDICTS], horizontal=True,
                              index=2, format_func=lambda c: T.t(dict(FLAG_VERDICTS)[c]),
                              key="fv_%s" % key, label_visibility="collapsed")
