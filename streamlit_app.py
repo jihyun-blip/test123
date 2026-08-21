@@ -25,7 +25,7 @@ from lib import sheets
 from lib.order import OrderState
 
 # 배포 반영 여부를 화면에서 바로 확인하기 위한 표시
-APP_VERSION = "2026-08-10.10"
+APP_VERSION = "2026-08-10.12"
 KRW = 1400  # 비용을 체감 가능한 단위로 바꾸기 위한 환산 환율
 
 # 태국 직원이 이 도구를 직접 쓴다. 이름 대신 A·B·C 로 구분한다.

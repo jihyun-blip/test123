@@ -11,6 +11,7 @@
 """
 import io
 import os
+import time
 
 import pandas as pd
 import requests
@@ -99,11 +100,30 @@ def is_mock():
 
 @st.cache_data(show_spinner=False)
 def _fetch_remote(sheet_id, tab, _ttl_bucket):
-    """_ttl_bucket 은 캐시 키를 소스별로 갈라놓기 위한 값이다."""
+    """_ttl_bucket 은 캐시 키를 소스별로 갈라놓기 위한 값이다.
+
+    구글 시트는 이따금 응답이 늦다. 한 번 늦었다고 앱이 멈추면 테스터는 아무것도
+    못 하고, 자기가 뭘 잘못했는지 알 방법도 없다. 잠깐 쉬고 다시 물어본다.
+    권한 문제(4xx)는 다시 물어도 같은 답이므로 바로 올린다."""
     url = CSV_URL.format(sheet_id=sheet_id, tab=tab)
-    r = requests.get(url, timeout=20)
-    r.raise_for_status()
-    return pd.read_csv(io.StringIO(r.content.decode("utf-8")), dtype=str).fillna("")
+    last = None
+    for attempt in range(3):
+        try:
+            # 첫 연결이 20초를 넘겨 멈췄다가 다음 시도에 0.7초로 오는 일이 잦다
+            r = requests.get(url, timeout=45)
+            r.raise_for_status()
+            return pd.read_csv(io.StringIO(r.content.decode("utf-8")),
+                               dtype=str).fillna("")
+        except requests.HTTPError as e:
+            code = getattr(e.response, "status_code", 0)
+            if 400 <= code < 500:
+                raise
+            last = e
+        except Exception as e:
+            last = e
+        if attempt < 2:
+            time.sleep(0.8 * (attempt + 1))
+    raise last
 
 
 @st.cache_data(show_spinner=False)
